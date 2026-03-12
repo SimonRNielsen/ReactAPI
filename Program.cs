@@ -19,8 +19,13 @@ namespace ReactAPI
             } 
             
             app.UseHttpsRedirection(); 
+
             app.UseAuthorization(); 
-            app.MapControllers(); 
+            app.MapControllers();
+
+            var port = 10000;
+            app.Urls.Add($"http://*:{port}");
+
             app.Run(); 
 
         } 
