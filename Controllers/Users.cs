@@ -39,9 +39,8 @@ namespace ReactAPI.Controllers
             createUsers.Add(HashData(new CreateUserDTO { Name = "Goosifer", Email = "goosifer@oceandefender.dk", Password = "Goosifer1234" }));
             string defaultUsers = JsonSerializer.Serialize(createUsers, new JsonSerializerOptions { WriteIndented = true });
 
-            if (!System.IO.File.Exists(userFile))
-                lock (fileLock)
-                    System.IO.File.WriteAllText(userFile, defaultUsers);
+            lock (fileLock)
+                System.IO.File.WriteAllText(userFile, defaultUsers);
 
         }
 
