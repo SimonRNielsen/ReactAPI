@@ -2,6 +2,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using static System.Net.WebRequestMethods;
 
 namespace ReactAPI.Controllers
 {
@@ -220,7 +221,7 @@ namespace ReactAPI.Controllers
 
             List<PostDTO> defaultPosts = new List<PostDTO>();
 
-            PostDTO mortenPost = new PostDTO { PosterID = "a7b9e4d1-3c2f-4d8a-9e5b-6f1c2d3e4a90", Post = "I Like dead geese and i cannot lie!" }; //Morten
+            PostDTO mortenPost = new PostDTO { PosterID = "a7b9e4d1-3c2f-4d8a-9e5b-6f1c2d3e4a90", Post = "I Like dead geese and i cannot lie!", PictureURL = "https://nypost.com/wp-content/uploads/sites/2/2024/09/viral-pic-man-lugging-around-89661423.jpg?w=1024" }; //Morten
             mortenPost.Likes.Add("a7b9e4d1-3c2f-4d8a-9e5b-6f1c2d3e4a90"); //Morten upvote
             mortenPost.Dislikes.Add("d3f1c2a4-8b6e-4a91-9c2d-1f7e5a6b8c30"); //Goosifer downvote
             CommentDTO goosiferComment = new CommentDTO { PosterID = "d3f1c2a4-8b6e-4a91-9c2d-1f7e5a6b8c30", PostID = mortenPost.PostID, Comment = "Screw you Morten ..!.." }; //Goosifer
