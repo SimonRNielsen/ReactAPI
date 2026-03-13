@@ -13,6 +13,7 @@ namespace ReactAPI.Controllers
 
         private static readonly string userFile = "tmp/users.json", resetPass;
         public static readonly object fileLock = new object();
+        private static string? usersHash;
         private static readonly Dictionary<UserResults, string> userResults = new Dictionary<UserResults, string>
         {
 
@@ -122,7 +123,7 @@ namespace ReactAPI.Controllers
 
             }
 
-            return Ok(new UserReturnDTO { Name = createdUser.Name, Email = createdUser.Email, ID = createdUser.ID });
+            return Ok(new UserReturnDTO { Name = createdUser.Name, Email = createdUser.Email, ID = createdUser.ID! });
 
         }
 
@@ -163,16 +164,17 @@ namespace ReactAPI.Controllers
         public IActionResult GetUserListings()
         {
 
-            string json;
-            lock (fileLock)
-                json = System.IO.File.ReadAllText(userFile);
-            List<User> users = JsonSerializer.Deserialize<List<User>>(json) ?? new List<User>();
+            lock (Posts.cacheLock)
+                return Ok(Posts.cachedUsers); 
 
-            List<UserListingDTO> activeUsers = new List<UserListingDTO>();
-            foreach (User user in users)
-                activeUsers.Add(new UserListingDTO { ID = user.ID, Name = user.Name });
+        }
 
-            return Ok(activeUsers); 
+        [HttpGet("checknewusers")]
+        public IActionResult UserHash()
+        {
+
+            lock (Posts.cacheLock)
+                return Ok(usersHash);
 
         }
 
@@ -227,7 +229,14 @@ namespace ReactAPI.Controllers
             };
 
             lock (Posts.cacheLock)
+            {
                 Posts.cachedUsers.Add(new UserListingDTO { ID = newUser.ID, Name = user.Name });
+
+                string createHash = JsonSerializer.Serialize(Posts.cachedUsers);
+                byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(createHash));
+
+                usersHash = Convert.ToHexString(hash);
+            }
 
             return newUser;
 
@@ -241,7 +250,7 @@ namespace ReactAPI.Controllers
     public class User
     {
 
-        public string ID { get; set; }
+        public string? ID { get; set; }
 
         public required string Name { get; set; }
 
