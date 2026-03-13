@@ -217,6 +217,7 @@ namespace ReactAPI.Controllers
             User newUser = new User()
             {
 
+                ID = user.ID!,
                 Name = user.Name,
                 Email = user.Email,
                 PasswordHashWithSalt = hashedPassWithSalt,
