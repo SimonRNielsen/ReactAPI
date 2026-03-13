@@ -240,7 +240,7 @@ namespace ReactAPI.Controllers
     public class User
     {
 
-        public string ID { get; set; } = Guid.NewGuid().ToString();
+        public string ID { get; set; }
 
         public required string Name { get; set; }
 
