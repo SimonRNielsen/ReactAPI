@@ -107,12 +107,13 @@ namespace ReactAPI.Controllers
                 if (users.Any(x => x.Email.Equals(newUser.Email, StringComparison.OrdinalIgnoreCase)))
                     return BadRequest(userResults[UserResults.FailedCreation]);
 
-                createdUser = HashData(newUser);
-                if (newUser.ID != null) //Workaround til at Morten og Goosifer altid er unikke
-                    createdUser.ID = newUser.ID;
+                if (string.IsNullOrWhiteSpace(newUser.ID))
+                    newUser.ID = Guid.NewGuid().ToString(); //Workaround til at Morten og Goosifer kan oprettes som default
 
-                while (users.Any(x => x.ID == createdUser.ID))
-                    createdUser.ID = Guid.NewGuid().ToString(); //Sikrer ingen kan kopiere unikke ID'er udefra eller hvis der mirakuløst skulle være en ikke unik ID
+                while (users.Any(x => x.ID == newUser.ID))
+                    newUser.ID = Guid.NewGuid().ToString(); //Sikrer ingen kan kopiere unikke ID'er udefra eller hvis der mirakuløst skulle være en ikke unik ID
+
+                createdUser = HashData(newUser);
 
                 users.Add(createdUser);
 
