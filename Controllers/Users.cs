@@ -111,8 +111,8 @@ namespace ReactAPI.Controllers
                 if (newUser.ID != null) //Workaround til at Morten og Goosifer altid er unikke
                     createdUser.ID = newUser.ID;
 
-                while (users.Any(x => x.ID == newUser.ID))
-                    newUser.ID = Guid.NewGuid().ToString(); //Sikrer ingen kan kopiere unikke ID'er udefra eller hvis der mirakuløst skulle være en ikke unik ID
+                while (users.Any(x => x.ID == createdUser.ID))
+                    createdUser.ID = Guid.NewGuid().ToString(); //Sikrer ingen kan kopiere unikke ID'er udefra eller hvis der mirakuløst skulle være en ikke unik ID
 
                 users.Add(createdUser);
 
@@ -155,6 +155,23 @@ namespace ReactAPI.Controllers
             ResetAction();
 
             return NoContent();
+
+        }
+
+        [HttpGet("getusers")]
+        public IActionResult GetUserListings()
+        {
+
+            string json;
+            lock (fileLock)
+                json = System.IO.File.ReadAllText(userFile);
+            List<User> users = JsonSerializer.Deserialize<List<User>>(json) ?? new List<User>();
+
+            List<UserListingDTO> activeUsers = new List<UserListingDTO>();
+            foreach (User user in users)
+                activeUsers.Add(new UserListingDTO { ID = user.ID, Name = user.Name });
+
+            return Ok(activeUsers); 
 
         }
 
@@ -206,6 +223,9 @@ namespace ReactAPI.Controllers
                 JoinTime = DateTime.UtcNow
 
             };
+
+            lock (Posts.cacheLock)
+                Posts.cachedUsers.Add(new UserListingDTO { ID = newUser.ID, Name = user.Name });
 
             return newUser;
 
@@ -286,6 +306,15 @@ namespace ReactAPI.Controllers
 
 
         public required string ID { get; set; }
+
+    }
+
+    public class UserListingDTO
+    {
+
+        public required string ID { get; set; }
+
+        public required string Name { get; set; }
 
     }
 
