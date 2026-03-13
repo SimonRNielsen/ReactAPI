@@ -12,7 +12,7 @@ namespace ReactAPI.Controllers
     {
 
         private static readonly string userFile = "tmp/users.json", resetPass;
-        private static readonly object fileLock = new object();
+        public static readonly object fileLock = new object();
         private static readonly Dictionary<UserResults, string> userResults = new Dictionary<UserResults, string>
         {
 
@@ -35,8 +35,8 @@ namespace ReactAPI.Controllers
                 Directory.CreateDirectory(path);
 
             List<User> createUsers = new List<User>();
-            createUsers.Add(HashData(new CreateUserDTO { Name = "Morten", Email = "morten@oceandefender.dk", Password = "Morten1234" }));
-            createUsers.Add(HashData(new CreateUserDTO { Name = "Goosifer", Email = "goosifer@oceandefender.dk", Password = "Goosifer1234" }));
+            createUsers.Add(HashData(new CreateUserDTO { Name = "Morten", Email = "morten@oceandefender.dk", Password = "Morten1234", ID = "a7b9e4d1-3c2f-4d8a-9e5b-6f1c2d3e4a90" }));
+            createUsers.Add(HashData(new CreateUserDTO { Name = "Goosifer", Email = "goosifer@oceandefender.dk", Password = "Goosifer1234", ID = "d3f1c2a4-8b6e-4a91-9c2d-1f7e5a6b8c30" }));
             string defaultUsers = JsonSerializer.Serialize(createUsers, new JsonSerializerOptions { WriteIndented = true });
 
             lock (fileLock)
@@ -76,7 +76,7 @@ namespace ReactAPI.Controllers
                 if (!passPlusSaltHash.SequenceEqual(user.PasswordHashWithSalt))
                     return Unauthorized(userResults[UserResults.InvalidPassOrMail]);
 
-                result = new UserReturnDTO { Name = user.Name, Email = user.Email };
+                result = new UserReturnDTO { Name = user.Name, Email = user.Email, ID = user.ID };
 
             }
 
@@ -96,6 +96,8 @@ namespace ReactAPI.Controllers
             if (string.IsNullOrWhiteSpace(newUser.Email) || string.IsNullOrWhiteSpace(newUser.Password) || string.IsNullOrWhiteSpace(newUser.Name))
                 return BadRequest(userResults[UserResults.FailedCreation]);
 
+            User createdUser;
+
             lock (fileLock)
             {
 
@@ -105,7 +107,12 @@ namespace ReactAPI.Controllers
                 if (users.Any(x => x.Email.Equals(newUser.Email, StringComparison.OrdinalIgnoreCase)))
                     return BadRequest(userResults[UserResults.FailedCreation]);
 
-                User createdUser = HashData(newUser);
+                createdUser = HashData(newUser);
+                if (newUser.ID != null) //Workaround til at Morten og Goosifer altid er unikke
+                    createdUser.ID = newUser.ID;
+
+                while (users.Any(x => x.ID == newUser.ID))
+                    newUser.ID = Guid.NewGuid().ToString(); //Sikrer ingen kan kopiere unikke ID'er udefra eller hvis der mirakuløst skulle være en ikke unik ID
 
                 users.Add(createdUser);
 
@@ -114,7 +121,7 @@ namespace ReactAPI.Controllers
 
             }
 
-            return Ok(new UserReturnDTO { Name = newUser.Name, Email = newUser.Email });
+            return Ok(new UserReturnDTO { Name = createdUser.Name, Email = createdUser.Email, ID = createdUser.ID });
 
         }
 
@@ -167,8 +174,8 @@ namespace ReactAPI.Controllers
             List<User> createUsers = new List<User>
             {
 
-            HashData(new CreateUserDTO { Name = "Morten", Email = "morten@oceandefender.dk", Password = "Morten1234" }),
-            HashData(new CreateUserDTO { Name = "Goosifer", Email = "goosifer@oceandefender.dk", Password = "Goosifer1234" })
+            HashData(new CreateUserDTO { Name = "Morten", Email = "morten@oceandefender.dk", Password = "Morten1234", ID = "a7b9e4d1-3c2f-4d8a-9e5b-6f1c2d3e4a90" }),
+            HashData(new CreateUserDTO { Name = "Goosifer", Email = "goosifer@oceandefender.dk", Password = "Goosifer1234", ID = "d3f1c2a4-8b6e-4a91-9c2d-1f7e5a6b8c30" })
 
             };
             string defaultUsers = JsonSerializer.Serialize(createUsers, new JsonSerializerOptions { WriteIndented = true });
@@ -211,6 +218,8 @@ namespace ReactAPI.Controllers
     /// </summary>
     public class User
     {
+
+        public string ID { get; set; } = Guid.NewGuid().ToString();
 
         public required string Name { get; set; }
 
@@ -258,6 +267,9 @@ namespace ReactAPI.Controllers
 
         public required string Password { get; set; }
 
+
+        public string? ID { get; set; }
+
     }
 
     /// <summary>
@@ -271,6 +283,9 @@ namespace ReactAPI.Controllers
 
 
         public required string Email { get; set; }
+
+
+        public required string ID { get; set; }
 
     }
 
