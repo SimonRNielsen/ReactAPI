@@ -12,9 +12,12 @@ namespace ReactAPI
                 options.AddPolicy("ReactPolicy",
                     policy =>
                     {
-                        policy.WithOrigins("http://localhost:3000")
-                              .AllowAnyHeader()
-                              .AllowAnyMethod();
+                        policy.WithOrigins(
+                            "http://localhost:3000",
+                            "https://simonrnielsen.github.io"
+                        )
+                        .AllowAnyHeader()
+                        .AllowAnyMethod();
                     });
             });
 
