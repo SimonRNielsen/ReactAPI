@@ -1,10 +1,8 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Npgsql;
-using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Xml.Linq;
 
 namespace ReactAPI.Controllers
 {
@@ -43,7 +41,14 @@ namespace ReactAPI.Controllers
         public async Task<IActionResult> GetPosts()
         {
 
-            return Ok(await ReadPosts());
+            List<PostDTO> posts;
+
+            lock (dictLock)
+                posts = cachedPosts.Values.ToList();
+
+            string json = JsonSerializer.Serialize(posts, new JsonSerializerOptions { WriteIndented = true });
+
+            return Ok(json);
 
         }
 
@@ -55,16 +60,32 @@ namespace ReactAPI.Controllers
                 if (!cachedUsers.Any(x => x.ID == comment.PosterID))
                     return BadRequest(postResults[PostResults.UserNotFound]);
 
-            List<PostDTO> posts = await ReadPosts();
-
-            PostDTO? post = posts.Find(x => comment.PostID == x.PostID);
+            PostDTO? post; 
+            lock (dictLock)
+                post = cachedPosts.Values.FirstOrDefault(x => comment.PostID == x.PostID);
 
             if (post == null)
                 return Conflict(postResults[PostResults.NotFound]);
 
-            post.Comments.Add(new CommentDTO { Comment = comment.Comment, PosterID = comment.PosterID, PostID = comment.PostID });
+            CommentDTO newComment = new CommentDTO { Comment = comment.Comment, PosterID = comment.PosterID, PostID = comment.PostID };
 
-            SavePosts(posts);
+            await using var connection = new NpgsqlConnection(Users.database_login);
+            await connection.OpenAsync();
+
+            await using var cmd = new NpgsqlCommand("INSERT INTO comments (comment_id, commenter_id, comment, post_id) VALUES (@COMMENT_ID, @COMMENTER_ID, @COMMENT, @POST_ID)", connection);
+            cmd.Parameters.AddWithValue("POST_ID", newComment.PostID);
+            cmd.Parameters.AddWithValue("COMMENT_ID", newComment.CommentID);
+            cmd.Parameters.AddWithValue("COMMENT", newComment.Comment);
+            cmd.Parameters.AddWithValue("COMMENTER_ID", newComment.PosterID);
+
+            int success = await cmd.ExecuteNonQueryAsync();
+
+            if (success == 0)
+                return Conflict(postResults[PostResults.NotFound]);
+
+            lock (dictLock)
+                post.Comments.Add(newComment);
+            ReHash();
 
             return Ok(postResults[PostResults.CommentAdded]);
 
@@ -78,14 +99,15 @@ namespace ReactAPI.Controllers
                 if (!cachedUsers.Any(x => x.ID == opinion.UserID))
                     return BadRequest(postResults[PostResults.UserNotFound]);
 
-            List<PostDTO> posts = await ReadPosts();
-
-            PostDTO? post = posts.Find(x => opinion.PostID == x.PostID);
+            PostDTO? post;
+            lock (dictLock)
+                post = cachedPosts.Values.FirstOrDefault(x => opinion.PostID == x.PostID);
 
             if (post == null)
                 return Conflict(postResults[PostResults.NotFound]);
 
-            if (opinion.Opinion)
+            /* ORIGINAL
+            if (opinion.Opinion) // ORIGINAL
             {
                 if (post.Likes.Contains(opinion.UserID))
                     post.Likes.Remove(opinion.UserID);
@@ -107,8 +129,74 @@ namespace ReactAPI.Controllers
                         post.Likes.Remove(opinion.UserID);
                 }
             }
+            */
 
-            SavePosts(posts); //////////////////////////////////////////////////////////////////////////// Opinions
+            bool alreadyLiked = post.Likes.Contains(opinion.UserID);
+            bool alreadyDisliked = post.Dislikes.Contains(opinion.UserID);
+
+            await using var connection = new NpgsqlConnection(Users.database_login);
+            await connection.OpenAsync();
+
+            await using var transaction = await connection.BeginTransactionAsync();
+
+            if (opinion.Opinion)
+            {
+                if (!alreadyLiked)
+                {
+                    post.Likes.Add(opinion.UserID);
+
+                    // Indsæt like
+                    await using var insertLikeCmd = new NpgsqlCommand(
+                        "INSERT INTO likes (user_id, post_id) VALUES (@USER_ID, @POST_ID) ON CONFLICT DO NOTHING",
+                        connection, transaction);
+                    insertLikeCmd.Parameters.AddWithValue("USER_ID", opinion.UserID);
+                    insertLikeCmd.Parameters.AddWithValue("POST_ID", opinion.PostID);
+                    await insertLikeCmd.ExecuteNonQueryAsync();
+
+                    // Fjern evt. dislike
+                    if (alreadyDisliked)
+                    {
+                        post.Dislikes.Remove(opinion.UserID);
+                        await using var removeDislikeCmd = new NpgsqlCommand(
+                            "DELETE FROM dislikes WHERE user_id = @USER_ID AND post_id = @POST_ID",
+                            connection, transaction);
+                        removeDislikeCmd.Parameters.AddWithValue("USER_ID", opinion.UserID);
+                        removeDislikeCmd.Parameters.AddWithValue("POST_ID", opinion.PostID);
+                        await removeDislikeCmd.ExecuteNonQueryAsync();
+                    }
+                }
+            }
+            else
+            {
+                if (!alreadyDisliked)
+                {
+                    post.Dislikes.Add(opinion.UserID);
+
+                    // Indsæt dislike
+                    await using var insertDislikeCmd = new NpgsqlCommand(
+                        "INSERT INTO dislikes (user_id, post_id) VALUES (@USER_ID, @POST_ID) ON CONFLICT DO NOTHING",
+                        connection, transaction);
+                    insertDislikeCmd.Parameters.AddWithValue("USER_ID", opinion.UserID);
+                    insertDislikeCmd.Parameters.AddWithValue("POST_ID", opinion.PostID);
+                    await insertDislikeCmd.ExecuteNonQueryAsync();
+
+                    // Fjern evt. like
+                    if (alreadyLiked)
+                    {
+                        post.Likes.Remove(opinion.UserID);
+                        await using var removeLikeCmd = new NpgsqlCommand(
+                            "DELETE FROM likes WHERE user_id = @USER_ID AND post_id = @POST_ID",
+                            connection, transaction);
+                        removeLikeCmd.Parameters.AddWithValue("USER_ID", opinion.UserID);
+                        removeLikeCmd.Parameters.AddWithValue("POST_ID", opinion.PostID);
+                        await removeLikeCmd.ExecuteNonQueryAsync();
+                    }
+                }
+            }
+
+            await transaction.CommitAsync();
+
+            ReHash();
 
             return Ok(postResults[PostResults.OpinionRegistered]);
 
@@ -122,13 +210,27 @@ namespace ReactAPI.Controllers
                 if (!cachedUsers.Any(x => x.ID == newPost.PosterID))
                     return BadRequest(postResults[PostResults.UserNotFound]);
 
-            List<PostDTO> posts = await ReadPosts();
             PostDTO post = new PostDTO { Post = newPost.Post, PosterID = newPost.PosterID };
             if (newPost.PictureURL != null)
                 post.PictureURL = newPost.PictureURL;
 
-            posts.Add(post);
-            SavePosts(posts);
+            await using var connection = new NpgsqlConnection(Users.database_login);
+            await connection.OpenAsync();
+
+            await using var cmd = new NpgsqlCommand("INSERT INTO posts (post_id, poster_id, post, url) VALUES (@POST_ID, @POSTER_ID, @POST, @URL)", connection);
+            cmd.Parameters.AddWithValue("POST_ID", post.PostID);
+            cmd.Parameters.AddWithValue("POSTER_ID", post.PosterID);
+            cmd.Parameters.AddWithValue("POST", post.Post);
+            cmd.Parameters.AddWithValue("URL", (object?)post.PictureURL ?? DBNull.Value);
+
+            int success = await cmd.ExecuteNonQueryAsync();
+
+            if (success == 0)
+                return NotFound(postResults[PostResults.NotFound]);
+
+            lock (dictLock)
+                cachedPosts[post.PostID] = post;
+            ReHash();
 
             return Ok(postResults[PostResults.Created]);
 
@@ -232,6 +334,7 @@ namespace ReactAPI.Controllers
 
         }
 
+        /*
         private static void SavePosts(List<PostDTO> posts) /////////////////////////////////////////////////////// Skal uddelegeres
         {
 
@@ -244,105 +347,107 @@ namespace ReactAPI.Controllers
             currentHash = Convert.ToHexString(hash);
 
         }
+        */
 
+        /*
+        private static async Task<List<PostDTO>> ReadPosts()
+        {
 
-        //private static async Task<List<PostDTO>> ReadPosts()
-        //{
+            List<PostDTO> posts = new List<PostDTO>();
 
-        //    List<PostDTO> posts = new List<PostDTO>();
+            try
+            {
 
-        //    try
-        //    {
+                await using var connection = new NpgsqlConnection(Users.database_login);
+                await connection.OpenAsync();
 
-        //        await using var connection = new NpgsqlConnection(Users.database_login);
-        //        await connection.OpenAsync();
+                await using var postsCmd = new NpgsqlCommand("SELECT * FROM posts;", connection);
+                await using var postReader = await postsCmd.ExecuteReaderAsync();
 
-        //        await using var postsCmd = new NpgsqlCommand("SELECT * FROM posts;", connection);
-        //        await using var postReader = await postsCmd.ExecuteReaderAsync();
+                while (await postReader.ReadAsync())
+                {
 
-        //        while (await postReader.ReadAsync())
-        //        {
+                    PostDTO post = new PostDTO
+                    {
 
-        //            PostDTO post = new PostDTO
-        //            {
+                        PosterID = postReader.GetString(postReader.GetOrdinal("poster_id")),
+                        PostID = postReader.GetString(postReader.GetOrdinal("post_id")),
+                        Post = postReader.GetString(postReader.GetOrdinal("post")),
+                        PictureURL = postReader.IsDBNull(postReader.GetOrdinal("url"))
+                            ? null
+                            : postReader.GetString(postReader.GetOrdinal("url"))
 
-        //                PosterID = postReader.GetString(postReader.GetOrdinal("poster_id")),
-        //                PostID = postReader.GetString(postReader.GetOrdinal("post_id")),
-        //                Post = postReader.GetString(postReader.GetOrdinal("post")),
-        //                PictureURL = postReader.IsDBNull(postReader.GetOrdinal("url"))
-        //                    ? null
-        //                    : postReader.GetString(postReader.GetOrdinal("url"))
+                    };
 
-        //            };
+                    posts.Add(post);
 
-        //            posts.Add(post);
+                }
 
-        //        }
+                await connection.OpenAsync();
 
-        //        await connection.OpenAsync();
+                await using var commentsCmd = new NpgsqlCommand("SELECT * FROM comments;", connection);
+                await using var commentsReader = await commentsCmd.ExecuteReaderAsync();
 
-        //        await using var commentsCmd = new NpgsqlCommand("SELECT * FROM comments;", connection);
-        //        await using var commentsReader = await commentsCmd.ExecuteReaderAsync();
+                while (await commentsReader.ReadAsync())
+                {
 
-        //        while (await commentsReader.ReadAsync())
-        //        {
+                    CommentDTO comment = new CommentDTO
+                    {
 
-        //            CommentDTO comment = new CommentDTO
-        //            {
+                        PosterID = commentsReader.GetString(commentsReader.GetOrdinal("commenter_id")),
+                        PostID = commentsReader.GetString(commentsReader.GetOrdinal("post_id")),
+                        Comment = commentsReader.GetString(commentsReader.GetOrdinal("comment")),
+                        CommentID = commentsReader.GetString(commentsReader.GetOrdinal("comment_id"))
 
-        //                PosterID = commentsReader.GetString(commentsReader.GetOrdinal("commenter_id")),
-        //                PostID = commentsReader.GetString(commentsReader.GetOrdinal("post_id")),
-        //                Comment = commentsReader.GetString(commentsReader.GetOrdinal("comment")),
-        //                CommentID = commentsReader.GetString(commentsReader.GetOrdinal("comment_id"))
+                    };
 
-        //            };
+                    PostDTO addComment = posts.Find(x => x.PostID == comment.PostID)!;
+                    addComment.Comments.Add(comment);
 
-        //            PostDTO addComment = posts.Find(x => x.PostID == comment.PostID)!;
-        //            addComment.Comments.Add(comment);
+                }
 
-        //        }
+                await connection.OpenAsync();
 
-        //        await connection.OpenAsync();
+                await using var likesCmd = new NpgsqlCommand("SELECT * FROM likes;", connection);
+                await using var likesReader = await likesCmd.ExecuteReaderAsync();
 
-        //        await using var likesCmd = new NpgsqlCommand("SELECT * FROM likes;", connection);
-        //        await using var likesReader = await likesCmd.ExecuteReaderAsync();
+                while (await likesReader.ReadAsync())
+                {
 
-        //        while (await likesReader.ReadAsync())
-        //        {
+                    string userID = likesReader.GetString(likesReader.GetOrdinal("user_id"));
+                    string postID = likesReader.GetString(likesReader.GetOrdinal("post_id"));
 
-        //            string userID = likesReader.GetString(likesReader.GetOrdinal("user_id"));
-        //            string postID = likesReader.GetString(likesReader.GetOrdinal("post_id"));
+                    PostDTO addLike = posts.Find(x => x.PostID == postID)!;
+                    addLike.Likes.Add(userID);
 
-        //            PostDTO addLike = posts.Find(x => x.PostID == postID)!;
-        //            addLike.Likes.Add(userID);
+                }
 
-        //        }
+                await connection.OpenAsync();
 
-        //        await connection.OpenAsync();
+                await using var dislikesCmd = new NpgsqlCommand("SELECT * FROM dislikes;", connection);
+                await using var dislikesReader = await dislikesCmd.ExecuteReaderAsync();
 
-        //        await using var dislikesCmd = new NpgsqlCommand("SELECT * FROM dislikes;", connection);
-        //        await using var dislikesReader = await dislikesCmd.ExecuteReaderAsync();
+                while (await dislikesReader.ReadAsync())
+                {
 
-        //        while (await dislikesReader.ReadAsync())
-        //        {
+                    string userID = dislikesReader.GetString(likesReader.GetOrdinal("user_id"));
+                    string postID = dislikesReader.GetString(likesReader.GetOrdinal("post_id"));
 
-        //            string userID = dislikesReader.GetString(likesReader.GetOrdinal("user_id"));
-        //            string postID = dislikesReader.GetString(likesReader.GetOrdinal("post_id"));
+                    PostDTO addDislike = posts.Find(x => x.PostID == postID)!;
+                    addDislike.Dislikes.Add(userID);
 
-        //            PostDTO addDislike = posts.Find(x => x.PostID == postID)!;
-        //            addDislike.Dislikes.Add(userID);
+                }
 
-        //        }
+            }
+            catch
+            {
 
-        //    }
-        //    catch
-        //    {
+            }
 
-        //    }
+            return posts;
 
-        //    return posts;
-
-        //}
+        }
+        */
 
         private static async Task<List<PostDTO>> ReadPosts()
         {
