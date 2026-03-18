@@ -2,6 +2,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Npgsql;
 
 namespace ReactAPI.Controllers
 {
@@ -11,7 +12,7 @@ namespace ReactAPI.Controllers
     public class Users : ControllerBase
     {
 
-        private static readonly string userFile = "tmp/users.json", resetPass;
+        private static readonly string userFile = "tmp/users.json", resetPass, database_login;
         public static readonly object fileLock = new object();
         private static string? usersHash;
         private static readonly Dictionary<UserResults, string> userResults = new Dictionary<UserResults, string>
@@ -42,6 +43,16 @@ namespace ReactAPI.Controllers
 
             lock (fileLock)
                 System.IO.File.WriteAllText(userFile, defaultUsers);
+
+            string database_user = Environment.GetEnvironmentVariable("DATABASE_USER")!;
+            string database_password = Environment.GetEnvironmentVariable("DATABASE_PASSWORD")!;
+            database_login =
+            "Host=dpg-d6t6ng3uibrs73cnkqag-a;" +
+            "Port=5432;" +
+            "Database=onlymortenfans;" +
+            $"Username={database_user};" +
+            $"Password={database_password};" +
+            "SSL Mode=Require;";
 
         }
 
@@ -185,6 +196,28 @@ namespace ReactAPI.Controllers
 
             return Ok();
 
+        }
+
+        /// <summary>
+        /// Endpoint to verify database access and that users exist
+        /// </summary>
+        [HttpGet("db-test")]
+        public async Task<IActionResult> DbTest()
+        {
+            await using var connection = new NpgsqlConnection(database_login);
+            await connection.OpenAsync();
+
+            await using var cmd = new NpgsqlCommand(
+                "SELECT COUNT(*) FROM users;",
+                connection);
+
+            long count = (long)await cmd.ExecuteScalarAsync();
+
+            return Ok(new
+            {
+                message = "Database connection successful",
+                users_in_database = count
+            });
         }
 
 
