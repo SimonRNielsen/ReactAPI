@@ -31,7 +31,7 @@ namespace ReactAPI.Controllers
         static Posts()
         {
 
-
+            currentHash = InitialPostsHash();
 
         }
 
@@ -76,7 +76,7 @@ namespace ReactAPI.Controllers
 
             List<PostDTO> posts = ReadPosts();
 
-            PostDTO? post = posts.Find(x => opinion.PostID == x.PostID);
+            PostDTO? post = posts.Find(x => opinion.PostID == x.PostID); 
 
             if (post == null)
                 return Conflict(postResults[PostResults.NotFound]);
@@ -104,7 +104,7 @@ namespace ReactAPI.Controllers
                 }
             }
 
-            SavePosts(posts);
+            SavePosts(posts); //////////////////////////////////////////////////////////////////////////// Opinions
 
             return Ok(postResults[PostResults.OpinionRegistered]);
 
@@ -185,18 +185,6 @@ namespace ReactAPI.Controllers
 
         }
 
-        [HttpDelete("clearposts")]
-        public IActionResult ClearPosts([FromBody] string pass)
-        {
-
-            if (string.IsNullOrEmpty(pass) || pass != resetPass)
-                return Unauthorized(postResults[PostResults.NotAuthenticated]);
-
-            CreateDefaultPosts();
-
-            return NoContent();
-
-        }
 
         [HttpGet("update")]
         public IActionResult SendHash()
@@ -206,39 +194,16 @@ namespace ReactAPI.Controllers
 
         }
 
-
-        private static void CreateDefaultPosts()
-        {
-
-            List<PostDTO> defaultPosts = new List<PostDTO>();
-
-            PostDTO mortenPost = new PostDTO { PosterID = "a7b9e4d1-3c2f-4d8a-9e5b-6f1c2d3e4a90", Post = "Remember when i defeated this weakling?", PictureURL = "https://youtu.be/UVkUIRIskWk" }; //Morten
-            mortenPost.Likes.Add("a7b9e4d1-3c2f-4d8a-9e5b-6f1c2d3e4a90"); //Morten upvote
-            mortenPost.Dislikes.Add("d3f1c2a4-8b6e-4a91-9c2d-1f7e5a6b8c30"); //Goosifer downvote
-            CommentDTO goosiferComment = new CommentDTO { PosterID = "d3f1c2a4-8b6e-4a91-9c2d-1f7e5a6b8c30", PostID = mortenPost.PostID, Comment = "Screw you Morten ..!.. I'll get you next time!!!" }; //Goosifer
-            mortenPost.Comments.Add(goosiferComment);
-
-            defaultPosts.Add(mortenPost);
-            SavePosts(defaultPosts);
-
-        }
-
-
         private static void SavePosts(List<PostDTO> posts)
         {
 
             string postsJson = JsonSerializer.Serialize(posts, new JsonSerializerOptions { WriteIndented = true });
 
-            lock (fileLock)
-            {
+            //System.IO.File.WriteAllText(postsFile, postsJson); ////////////////////////////////////////// Skal laves om
 
-                System.IO.File.WriteAllText(postsFile, postsJson);
+            byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(postsJson));
 
-                byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(postsJson));
-
-                currentHash = Convert.ToHexString(hash);
-
-            }
+            currentHash = Convert.ToHexString(hash);
 
         }
 
@@ -246,12 +211,23 @@ namespace ReactAPI.Controllers
         private static List<PostDTO> ReadPosts()
         {
 
-            string json;
-            lock (fileLock)
-                json = System.IO.File.ReadAllText(postsFile);
-            List<PostDTO> posts = JsonSerializer.Deserialize<List<PostDTO>>(json) ?? new List<PostDTO>();
+            List<PostDTO> posts = null; /////////////////////////////////////////////////// Hent fra db, compile
 
             return posts;
+
+        }
+
+
+        private static string InitialPostsHash()
+        {
+
+            List<PostDTO> posts = ReadPosts();
+
+            string postsJson = JsonSerializer.Serialize(posts, new JsonSerializerOptions { WriteIndented = true });
+
+            byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(postsJson));
+
+            return Convert.ToHexString(hash);
 
         }
 

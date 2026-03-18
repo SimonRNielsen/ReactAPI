@@ -37,6 +37,8 @@ namespace ReactAPI.Controllers
             $"Password={database_password};" +
             "SSL Mode=Require;";
 
+            usersHash = InitialUsersHash();
+
         }
 
         /// <summary>
@@ -53,27 +55,23 @@ namespace ReactAPI.Controllers
 
             UserReturnDTO result;
 
-            lock (fileLock)
-            {
+            List<User>? users = GetUsersFromDB();
+            if (users == null)
+                return BadRequest(userResults[UserResults.FailedCreation]);
 
-                string json = System.IO.File.ReadAllText(userFile);
-                List<User> users = JsonSerializer.Deserialize<List<User>>(json) ?? new List<User>();
+            User? user = users.FirstOrDefault(x => x.Email.Equals(loginAttempt.Email, StringComparison.OrdinalIgnoreCase));
 
-                User? user = users.FirstOrDefault(x => x.Email.Equals(loginAttempt.Email, StringComparison.OrdinalIgnoreCase));
+            if (user == null)
+                return Unauthorized(userResults[UserResults.InvalidPassOrMail]);
 
-                if (user == null)
-                    return Unauthorized(userResults[UserResults.InvalidPassOrMail]);
+            byte[] inputPlusSalt = Encoding.UTF8.GetBytes(loginAttempt.Password).Concat(user.Salt).ToArray();
+            using SHA512 mySHA512 = SHA512.Create();
+            byte[] passPlusSaltHash = mySHA512.ComputeHash(inputPlusSalt);
 
-                byte[] inputPlusSalt = Encoding.UTF8.GetBytes(loginAttempt.Password).Concat(user.Salt).ToArray();
-                using SHA256 mySHA256 = SHA256.Create();
-                byte[] passPlusSaltHash = mySHA256.ComputeHash(inputPlusSalt);
+            if (!passPlusSaltHash.SequenceEqual(user.PasswordHashWithSalt))
+                return Unauthorized(userResults[UserResults.InvalidPassOrMail]);
 
-                if (!passPlusSaltHash.SequenceEqual(user.PasswordHashWithSalt))
-                    return Unauthorized(userResults[UserResults.InvalidPassOrMail]);
-
-                result = new UserReturnDTO { Name = user.Name, Email = user.Email, ID = user.ID };
-
-            }
+            result = new UserReturnDTO { Name = user.Name, Email = user.Email, ID = user.ID };
 
             return Ok(result);
 
@@ -93,64 +91,24 @@ namespace ReactAPI.Controllers
 
             User createdUser;
 
-            lock (fileLock)
-            {
+            List<User>? users = GetUsersFromDB();
+            if (users == null)
+                return BadRequest(userResults[UserResults.FailedCreation]);
 
-                string json = System.IO.File.ReadAllText(userFile);
-                List<User> users = JsonSerializer.Deserialize<List<User>>(json) ?? new List<User>();
+            if (users.Any(x => x.Email.Equals(newUser.Email, StringComparison.OrdinalIgnoreCase)))
+                return BadRequest(userResults[UserResults.FailedCreation]);
 
-                if (users.Any(x => x.Email.Equals(newUser.Email, StringComparison.OrdinalIgnoreCase)))
-                    return BadRequest(userResults[UserResults.FailedCreation]);
+            if (string.IsNullOrWhiteSpace(newUser.ID))
+                newUser.ID = Guid.NewGuid().ToString(); //Workaround til at Morten og Goosifer kan oprettes som default
 
-                if (string.IsNullOrWhiteSpace(newUser.ID))
-                    newUser.ID = Guid.NewGuid().ToString(); //Workaround til at Morten og Goosifer kan oprettes som default
+            while (users.Any(x => x.ID == newUser.ID))
+                newUser.ID = Guid.NewGuid().ToString(); //Sikrer ingen kan kopiere unikke ID'er udefra eller hvis der mirakuløst skulle være en ikke unik ID
 
-                while (users.Any(x => x.ID == newUser.ID))
-                    newUser.ID = Guid.NewGuid().ToString(); //Sikrer ingen kan kopiere unikke ID'er udefra eller hvis der mirakuløst skulle være en ikke unik ID
+            createdUser = AddUser(newUser);
 
-                createdUser = HashData(newUser);
+            ////////////////////////////////////////////////////////////////////////////////////// Tilføj user
 
-                users.Add(createdUser);
-
-                string updatedUsers = JsonSerializer.Serialize(users, new JsonSerializerOptions { WriteIndented = true });
-                System.IO.File.WriteAllText(userFile, updatedUsers);
-
-            }
-
-            return Ok(new UserReturnDTO { Name = createdUser.Name, Email = createdUser.Email, ID = createdUser.ID! });
-
-        }
-
-        /// <summary>
-        /// Testing tool to see contents of the users.json file
-        /// </summary>
-        /// <returns>All "users"</returns>
-        [HttpGet("testreader")]
-        public IEnumerable<User> Get()
-        {
-
-            string json;
-            lock (fileLock)
-                json = System.IO.File.ReadAllText(userFile);
-            List<User> users = JsonSerializer.Deserialize<List<User>>(json) ?? new List<User>();
-            return users;
-
-        }
-
-        /// <summary>
-        /// Deletes the contents of "users.json"
-        /// </summary>
-        /// <returns>Response</returns>
-        [HttpDelete("clear")]
-        public IActionResult DeleteUsers([FromBody] string text)
-        {
-
-            if (text != resetPass)
-                return BadRequest();
-
-            ResetAction();
-
-            return NoContent();
+            return Ok(new UserReturnDTO { Name = createdUser.Name, Email = createdUser.Email, ID = createdUser.ID });
 
         }
 
@@ -162,6 +120,7 @@ namespace ReactAPI.Controllers
                 return Ok(Posts.cachedUsers); 
 
         }
+
 
         [HttpGet("checknewusers")]
         public IActionResult UserHash()
@@ -182,33 +141,15 @@ namespace ReactAPI.Controllers
         }
 
 
-        private void ResetAction()
+        private static User AddUser(CreateUserDTO user)
         {
 
-            List<User> createUsers = new List<User>
-            {
-
-            HashData(new CreateUserDTO { Name = "Morten", Email = "morten@oceandefender.dk", Password = "Morten1234", ID = "a7b9e4d1-3c2f-4d8a-9e5b-6f1c2d3e4a90" }),
-            HashData(new CreateUserDTO { Name = "Goosifer", Email = "goosifer@oceandefender.dk", Password = "Goosifer1234", ID = "d3f1c2a4-8b6e-4a91-9c2d-1f7e5a6b8c30" })
-
-            };
-            string defaultUsers = JsonSerializer.Serialize(createUsers, new JsonSerializerOptions { WriteIndented = true });
-
-            lock (fileLock)
-                System.IO.File.WriteAllText(userFile, defaultUsers);
-
-        }
-
-
-        private static User HashData(CreateUserDTO user)
-        {
-
-            byte[] salt = new byte[16];
+            byte[] salt = new byte[32];
             RandomNumberGenerator.Fill(salt);
 
             byte[] passPlusSalt = Encoding.UTF8.GetBytes(user.Password).Concat(salt).ToArray();
-            using SHA256 mySHA256 = SHA256.Create();
-            byte[] hashedPassWithSalt = mySHA256.ComputeHash(passPlusSalt);
+            using SHA512 mySHA512 = SHA512.Create();
+            byte[] hashedPassWithSalt = mySHA512.ComputeHash(passPlusSalt);
 
             User newUser = new User()
             {
@@ -224,7 +165,7 @@ namespace ReactAPI.Controllers
 
             lock (Posts.cacheLock)
             {
-                Posts.cachedUsers.Add(new UserListingDTO { ID = newUser.ID, Name = user.Name });
+                Posts.cachedUsers.Add(new UserListingDTO { ID = newUser.ID, Name = newUser.Name, JoinTime = newUser.JoinTime });
 
                 string createHash = JsonSerializer.Serialize(Posts.cachedUsers);
                 byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(createHash));
@@ -236,7 +177,22 @@ namespace ReactAPI.Controllers
 
         }
 
-        private static string InitiateUserHash()
+        private static string InitialUsersHash()
+        {
+
+            List<User> users = GetUsersFromDB();
+
+            foreach (User user in users)
+                Posts.cachedUsers.Add(new UserListingDTO { ID = user.ID, Name = user.Name, JoinTime = user.JoinTime, CatchPhrase = user.CatchPhrase, PictureURL = user.PictureURL });
+
+            string createHash = JsonSerializer.Serialize(Posts.cachedUsers);
+            byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(createHash));
+
+            return Convert.ToHexString(hash);
+
+        }
+
+        private static List<User> GetUsersFromDB()
         {
             return null!;
         }
@@ -249,7 +205,8 @@ namespace ReactAPI.Controllers
     public class User
     {
 
-        public string? ID { get; set; }
+        public required string ID { get; set; }
+
 
         public required string Name { get; set; }
 
@@ -264,6 +221,12 @@ namespace ReactAPI.Controllers
 
 
         public required DateTime JoinTime { get; set; }
+
+
+        public string? CatchPhrase { get; set; }
+
+
+        public string? PictureURL { get; set; }
 
     }
 
@@ -322,9 +285,20 @@ namespace ReactAPI.Controllers
     public class UserListingDTO
     {
 
+
         public required string ID { get; set; }
 
+
         public required string Name { get; set; }
+
+
+        public required DateTime JoinTime { get; set; }
+
+
+        public string? CatchPhrase { get; set; }
+
+
+        public string? PictureURL { get; set; }
 
     }
 
