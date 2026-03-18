@@ -32,17 +32,15 @@ namespace ReactAPI.Controllers
 
             string database_user = Environment.GetEnvironmentVariable("DATABASE_USER")!;
             string database_password = Environment.GetEnvironmentVariable("DATABASE_PASSWORD")!;
-            //string database_internalURL = Environment.GetEnvironmentVariable("DATABASE_URL")!;
-            //string database_path = Environment.GetEnvironmentVariable("DATABASE_PATH")!;
+            string database_internalURL = Environment.GetEnvironmentVariable("DATABASE_URL")!;
+            string database_path = Environment.GetEnvironmentVariable("DATABASE_PATH")!;
             database_login =
-            $"Host=dpg-d6t6ng3uibrs73cnkqag-a;" +
+            $"Host={database_internalURL};" +
             "Port=5432;" +
-            $"Database=onlymortenfans;" +
+            $"Database={database_path};" +
             $"Username={database_user};" +
             $"Password={database_password};" +
             "SSL Mode=Require;";
-
-            //InitialUsersHash().GetAwaiter().GetResult();
 
         }
 
@@ -54,6 +52,8 @@ namespace ReactAPI.Controllers
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginDTO loginAttempt)
         {
+
+            await InitializeIfNeededAsync();
 
             if (loginAttempt == null)
                 return BadRequest(userResults[UserResults.FailedLogin]);
@@ -90,6 +90,8 @@ namespace ReactAPI.Controllers
         [HttpPost("create")]
         public async Task<IActionResult> CreateUser([FromBody] CreateUserDTO newUser)
         {
+
+            await InitializeIfNeededAsync();
 
             if (string.IsNullOrWhiteSpace(newUser.Email) || string.IsNullOrWhiteSpace(newUser.Password) || string.IsNullOrWhiteSpace(newUser.Name))
                 return BadRequest(userResults[UserResults.FailedCreation]);
@@ -129,7 +131,7 @@ namespace ReactAPI.Controllers
         }
 
         [HttpGet("getusers")]
-        public IActionResult GetUserListings()
+        public async Task<IActionResult> GetUserListings()
         {
 
             lock (Posts.cacheLock)
@@ -139,8 +141,10 @@ namespace ReactAPI.Controllers
 
 
         [HttpGet("checknewusers")]
-        public IActionResult UserHash()
+        public async Task<IActionResult> UserHash()
         {
+
+            await InitializeIfNeededAsync();
 
             lock (Posts.cacheLock)
                 return Ok(usersHash);
@@ -160,6 +164,8 @@ namespace ReactAPI.Controllers
         public async Task<IActionResult> UpdateUser([FromBody] ProfileUpdateDTO profileUpdate)
         {
 
+            await InitializeIfNeededAsync();
+
             await using var connection = new NpgsqlConnection(database_login);
             await connection.OpenAsync();
 
@@ -173,25 +179,6 @@ namespace ReactAPI.Controllers
 
             return Ok(userResults[UserResults.ProfileUpdated]);
 
-        }
-
-        [HttpGet("db-test")]
-        public async Task<IActionResult> DbTest()
-        {
-            await using var connection = new NpgsqlConnection(database_login);
-            await connection.OpenAsync();
-
-            await using var cmd = new NpgsqlCommand(
-                "SELECT COUNT(*) FROM users;",
-                connection);
-
-            long count = (long)await cmd.ExecuteScalarAsync();
-
-            return Ok(new
-            {
-                message = "Database connection successful",
-                users_in_database = count
-            });
         }
 
 
@@ -234,6 +221,8 @@ namespace ReactAPI.Controllers
         private static async Task InitialUsersHash()
         {
 
+            await InitializeIfNeededAsync();
+
             List<User> users = await GetUsersFromDB();
 
             Posts.cachedUsers.Clear();
@@ -252,6 +241,8 @@ namespace ReactAPI.Controllers
 
         private static async Task<List<User>> GetUsersFromDB()
         {
+
+            await InitializeIfNeededAsync();
 
             List<User> users = new List<User>();
 
@@ -286,6 +277,25 @@ namespace ReactAPI.Controllers
 
             return users;
 
+        }
+
+        private static bool initialized = false;
+        private static readonly object initLock = new object();
+
+        public static async Task InitializeIfNeededAsync()
+        {
+            if (initialized) return;
+            lock (initLock)
+            {
+                if (initialized) return;
+            }
+
+            await InitialUsersHash();
+
+            lock (initLock)
+            {
+                initialized = true;
+            }
         }
 
     }

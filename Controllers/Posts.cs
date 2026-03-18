@@ -41,6 +41,8 @@ namespace ReactAPI.Controllers
         public async Task<IActionResult> GetPosts()
         {
 
+            await InitializeIfNeededAsync();
+
             List<PostDTO> posts;
 
             lock (dictLock)
@@ -53,6 +55,8 @@ namespace ReactAPI.Controllers
         [HttpPost("addcomment")]
         public async Task<IActionResult> AddComment([FromBody] NewCommentDTO comment)
         {
+
+            await InitializeIfNeededAsync();
 
             lock (cacheLock)
                 if (!cachedUsers.Any(x => x.ID == comment.PosterID))
@@ -92,6 +96,8 @@ namespace ReactAPI.Controllers
         [HttpPost("addopinion")]
         public async Task<IActionResult> AddOpinion([FromBody] OpinionDTO opinion)
         {
+
+            await InitializeIfNeededAsync();
 
             lock (cacheLock)
                 if (!cachedUsers.Any(x => x.ID == opinion.UserID))
@@ -196,6 +202,8 @@ namespace ReactAPI.Controllers
         public async Task<IActionResult> AddPost([FromBody] CreatePostDTO newPost)
         {
 
+            await InitializeIfNeededAsync();
+
             lock (cacheLock)
                 if (!cachedUsers.Any(x => x.ID == newPost.PosterID))
                     return BadRequest(postResults[PostResults.UserNotFound]);
@@ -229,6 +237,8 @@ namespace ReactAPI.Controllers
         [HttpDelete("deletepost")]
         public async Task<IActionResult> DeletePost([FromBody] DeletePostDTO post)
         {
+
+            await InitializeIfNeededAsync();
 
             lock (cacheLock)
                 if (!cachedUsers.Any(x => x.ID == post.PosterID))
@@ -276,6 +286,8 @@ namespace ReactAPI.Controllers
         public async Task<IActionResult> DeleteComment([FromBody] DeleteCommentDTO comment)
         {
 
+            await InitializeIfNeededAsync();
+
             lock (cacheLock)
                 if (!cachedUsers.Any(x => x.ID == comment.PosterID))
                     return BadRequest(postResults[PostResults.UserNotFound]);
@@ -317,8 +329,10 @@ namespace ReactAPI.Controllers
 
 
         [HttpGet("update")]
-        public IActionResult SendHash()
+        public async Task<IActionResult> SendHash()
         {
+
+            await InitializeIfNeededAsync();
 
             return Ok(currentHash);
 
@@ -545,6 +559,25 @@ namespace ReactAPI.Controllers
             lock (cacheLock)
                 currentHash = Convert.ToHexString(hash);
 
+        }
+
+        private static bool initialized = false;
+        private static readonly object initLock = new object();
+
+        public static async Task InitializeIfNeededAsync()
+        {
+            if (initialized) return;
+            lock (initLock)
+            {
+                if (initialized) return;
+            }
+
+            await ReadPosts(); // eller InitialUsersHash()
+
+            lock (initLock)
+            {
+                initialized = true;
+            }
         }
 
     }
