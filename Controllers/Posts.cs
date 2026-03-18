@@ -562,21 +562,24 @@ namespace ReactAPI.Controllers
         }
 
         private static bool initialized = false;
-        private static readonly object initLock = new object();
+        private static readonly SemaphoreSlim initSemaphore = new SemaphoreSlim(1, 1);
 
         public static async Task InitializeIfNeededAsync()
         {
             if (initialized) return;
-            lock (initLock)
+
+            await initSemaphore.WaitAsync(); // async-safe lås
+            try
             {
                 if (initialized) return;
-            }
 
-            await ReadPosts(); // eller InitialUsersHash()
+                await ReadPosts(); // async-safe initialization
 
-            lock (initLock)
-            {
                 initialized = true;
+            }
+            finally
+            {
+                initSemaphore.Release();
             }
         }
 

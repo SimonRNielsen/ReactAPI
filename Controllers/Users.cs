@@ -280,21 +280,24 @@ namespace ReactAPI.Controllers
         }
 
         private static bool initialized = false;
-        private static readonly object initLock = new object();
+        private static readonly SemaphoreSlim initSemaphore = new SemaphoreSlim(1, 1);
 
         public static async Task InitializeIfNeededAsync()
         {
             if (initialized) return;
-            lock (initLock)
+
+            await initSemaphore.WaitAsync(); // async-safe lås
+            try
             {
-                if (initialized) return;
+                if (initialized) return; // dobbelttjek efter vent
+
+                await InitialUsersHash(); // async metode uden deadlock
+
+                initialized = true; // marker som initialiseret
             }
-
-            await InitialUsersHash();
-
-            lock (initLock)
+            finally
             {
-                initialized = true;
+                initSemaphore.Release(); // frigiv semafor uanset hvad
             }
         }
 
