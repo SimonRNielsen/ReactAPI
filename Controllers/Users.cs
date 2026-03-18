@@ -42,7 +42,7 @@ namespace ReactAPI.Controllers
             $"Password={database_password};" +
             "SSL Mode=Require;";
 
-            InitialUsersHash().GetAwaiter().GetResult();
+            //InitialUsersHash().GetAwaiter().GetResult();
 
         }
 
@@ -173,6 +173,25 @@ namespace ReactAPI.Controllers
 
             return Ok(userResults[UserResults.ProfileUpdated]);
 
+        }
+
+        [HttpGet("db-test")]
+        public async Task<IActionResult> DbTest()
+        {
+            await using var connection = new NpgsqlConnection(database_login);
+            await connection.OpenAsync();
+
+            await using var cmd = new NpgsqlCommand(
+                "SELECT COUNT(*) FROM users;",
+                connection);
+
+            long count = (long)await cmd.ExecuteScalarAsync();
+
+            return Ok(new
+            {
+                message = "Database connection successful",
+                users_in_database = count
+            });
         }
 
 

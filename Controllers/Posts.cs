@@ -33,7 +33,7 @@ namespace ReactAPI.Controllers
         static Posts()
         {
 
-            ReadPosts().GetAwaiter().GetResult();
+            //ReadPosts().GetAwaiter().GetResult();
 
         }
 
