@@ -111,28 +111,18 @@ namespace ReactAPI.Controllers
 
             createdUser = AddUser(newUser);
 
-            try
-            {
+            await using var connection = new NpgsqlConnection(database_login);
+            await connection.OpenAsync();
 
-                await using var connection = new NpgsqlConnection(database_login);
-                await connection.OpenAsync();
+            await using var cmd = new NpgsqlCommand("INSERT INTO users (id, name, email, salt, hashedpw, datejoined) VALUES (@ID, @NAME, @EMAIL, @SALT, @HASHEDPW, @DATEJOINED)", connection);
+            cmd.Parameters.AddWithValue("ID", createdUser.ID);
+            cmd.Parameters.AddWithValue("NAME", createdUser.Name);
+            cmd.Parameters.AddWithValue("EMAIL", createdUser.Email);
+            cmd.Parameters.AddWithValue("SALT", createdUser.Salt);
+            cmd.Parameters.AddWithValue("HASHEDPW", createdUser.PasswordHashWithSalt);
+            cmd.Parameters.AddWithValue("DATEJOINED", createdUser.JoinTime);
 
-                await using var cmd = new NpgsqlCommand("INSERT INTO users (id, name, email, salt, hashedpw, datejoined) VALUES (@ID, @NAME, @EMAIL, @SALT, @HASHEDPW, @DATEJOINED)", connection);
-                cmd.Parameters.AddWithValue("ID", createdUser.ID);
-                cmd.Parameters.AddWithValue("NAME", createdUser.Name);
-                cmd.Parameters.AddWithValue("EMAIL", createdUser.Email);
-                cmd.Parameters.AddWithValue("SALT", createdUser.Salt);
-                cmd.Parameters.AddWithValue("HASHEDPW", createdUser.PasswordHashWithSalt);
-                cmd.Parameters.AddWithValue("DATEJOINED", createdUser.JoinTime);
-
-                await cmd.ExecuteNonQueryAsync();
-
-            }
-            catch (Exception error)
-            {
-                Console.WriteLine(error.ToString());
-                return BadRequest(userResults[UserResults.FailedCreation]);
-            }
+            await cmd.ExecuteNonQueryAsync();
 
             return Ok(new UserReturnDTO { Name = createdUser.Name, Email = createdUser.Email, ID = createdUser.ID });
 
