@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Mvc;
+using Npgsql;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -12,8 +13,7 @@ namespace ReactAPI.Controllers
     public class Users : ControllerBase
     {
 
-        private static readonly string userFile = "tmp/users.json", resetPass, database_login;
-        public static readonly object fileLock = new object();
+        public static readonly string database_login;
         private static string? usersHash;
         private static readonly Dictionary<UserResults, string> userResults = new Dictionary<UserResults, string>
         {
@@ -21,7 +21,9 @@ namespace ReactAPI.Controllers
             { UserResults.Created, "User created" },
             { UserResults.FailedCreation, "Couldn't create user" },
             { UserResults.FailedLogin, "Login attempt failed" },
-            { UserResults.InvalidPassOrMail, "Invalid password or email" }
+            { UserResults.InvalidPassOrMail, "Invalid password or email" },
+            { UserResults.ProfileUpdated, "Profile updated" },
+            { UserResults.UpdateFailed, "Profile update failed" }
 
         };
 
@@ -29,30 +31,19 @@ namespace ReactAPI.Controllers
         static Users()
         {
 
-            resetPass = "reset";
-
-            string path = Path.GetDirectoryName(userFile)!;
-
-            if (!Directory.Exists(path))
-                Directory.CreateDirectory(path);
-
-            List<User> createUsers = new List<User>();
-            createUsers.Add(HashData(new CreateUserDTO { Name = "Morten", Email = "morten@oceandefender.dk", Password = "Morten1234", ID = "a7b9e4d1-3c2f-4d8a-9e5b-6f1c2d3e4a90" }));
-            createUsers.Add(HashData(new CreateUserDTO { Name = "Goosifer", Email = "goosifer@oceandefender.dk", Password = "Goosifer1234", ID = "d3f1c2a4-8b6e-4a91-9c2d-1f7e5a6b8c30" }));
-            string defaultUsers = JsonSerializer.Serialize(createUsers, new JsonSerializerOptions { WriteIndented = true });
-
-            lock (fileLock)
-                System.IO.File.WriteAllText(userFile, defaultUsers);
-
             string database_user = Environment.GetEnvironmentVariable("DATABASE_USER")!;
             string database_password = Environment.GetEnvironmentVariable("DATABASE_PASSWORD")!;
+            string database_internalURL = Environment.GetEnvironmentVariable("DATABASE_URL")!;
+            string database_path = Environment.GetEnvironmentVariable("DATABASE_PATH")!;
             database_login =
-            "Host=dpg-d6t6ng3uibrs73cnkqag-a;" +
+            $"Host={database_internalURL};" +
             "Port=5432;" +
-            "Database=onlymortenfans;" +
+            $"Database={database_path};" +
             $"Username={database_user};" +
             $"Password={database_password};" +
             "SSL Mode=Require;";
+
+            InitialUsersHash().GetAwaiter().GetResult();
 
         }
 
@@ -62,7 +53,7 @@ namespace ReactAPI.Controllers
         /// <param name="loginAttempt">Data needed to verify user</param>
         /// <returns>Response</returns>
         [HttpPost("login")]
-        public IActionResult Login([FromBody] LoginDTO loginAttempt)
+        public async Task<IActionResult> Login([FromBody] LoginDTO loginAttempt)
         {
 
             if (loginAttempt == null)
@@ -70,27 +61,23 @@ namespace ReactAPI.Controllers
 
             UserReturnDTO result;
 
-            lock (fileLock)
-            {
+            List<User>? users = await GetUsersFromDB();
+            if (users == null)
+                return BadRequest(userResults[UserResults.FailedCreation]);
 
-                string json = System.IO.File.ReadAllText(userFile);
-                List<User> users = JsonSerializer.Deserialize<List<User>>(json) ?? new List<User>();
+            User? user = users.FirstOrDefault(x => x.Email.Equals(loginAttempt.Email, StringComparison.OrdinalIgnoreCase));
 
-                User? user = users.FirstOrDefault(x => x.Email.Equals(loginAttempt.Email, StringComparison.OrdinalIgnoreCase));
+            if (user == null)
+                return Unauthorized(userResults[UserResults.InvalidPassOrMail]);
 
-                if (user == null)
-                    return Unauthorized(userResults[UserResults.InvalidPassOrMail]);
+            byte[] inputPlusSalt = Encoding.UTF8.GetBytes(loginAttempt.Password).Concat(user.Salt).ToArray();
+            using SHA512 mySHA512 = SHA512.Create();
+            byte[] passPlusSaltHash = mySHA512.ComputeHash(inputPlusSalt);
 
-                byte[] inputPlusSalt = Encoding.UTF8.GetBytes(loginAttempt.Password).Concat(user.Salt).ToArray();
-                using SHA256 mySHA256 = SHA256.Create();
-                byte[] passPlusSaltHash = mySHA256.ComputeHash(inputPlusSalt);
+            if (!passPlusSaltHash.SequenceEqual(user.PasswordHashWithSalt))
+                return Unauthorized(userResults[UserResults.InvalidPassOrMail]);
 
-                if (!passPlusSaltHash.SequenceEqual(user.PasswordHashWithSalt))
-                    return Unauthorized(userResults[UserResults.InvalidPassOrMail]);
-
-                result = new UserReturnDTO { Name = user.Name, Email = user.Email, ID = user.ID };
-
-            }
+            result = new UserReturnDTO { Name = user.Name, Email = user.Email, ID = user.ID };
 
             return Ok(result);
 
@@ -102,7 +89,7 @@ namespace ReactAPI.Controllers
         /// <param name="newUser">User to add, contains encrypted data</param>
         /// <returns>Response</returns>
         [HttpPost("create")]
-        public IActionResult CreateUser([FromBody] CreateUserDTO newUser)
+        public async Task<IActionResult> CreateUser([FromBody] CreateUserDTO newUser)
         {
 
             if (string.IsNullOrWhiteSpace(newUser.Email) || string.IsNullOrWhiteSpace(newUser.Password) || string.IsNullOrWhiteSpace(newUser.Name))
@@ -110,64 +97,44 @@ namespace ReactAPI.Controllers
 
             User createdUser;
 
-            lock (fileLock)
+            List<User>? users = await GetUsersFromDB();
+            if (users == null)
+                return BadRequest(userResults[UserResults.FailedCreation]);
+
+            if (users.Any(x => x.Email.Equals(newUser.Email, StringComparison.OrdinalIgnoreCase)))
+                return BadRequest(userResults[UserResults.FailedCreation]);
+
+            if (string.IsNullOrWhiteSpace(newUser.ID))
+                newUser.ID = Guid.NewGuid().ToString(); //Workaround til at Morten og Goosifer kan oprettes som default
+
+            while (users.Any(x => x.ID == newUser.ID))
+                newUser.ID = Guid.NewGuid().ToString(); //Sikrer ingen kan kopiere unikke ID'er udefra eller hvis der mirakuløst skulle være en ikke unik ID
+
+            createdUser = AddUser(newUser);
+
+            try
             {
 
-                string json = System.IO.File.ReadAllText(userFile);
-                List<User> users = JsonSerializer.Deserialize<List<User>>(json) ?? new List<User>();
+                await using var connection = new NpgsqlConnection(database_login);
+                await connection.OpenAsync();
 
-                if (users.Any(x => x.Email.Equals(newUser.Email, StringComparison.OrdinalIgnoreCase)))
-                    return BadRequest(userResults[UserResults.FailedCreation]);
+                await using var cmd = new NpgsqlCommand("INSERT INTO users (id, name, email, salt, hashedpw, datejoined) VALUES (@ID, @NAME, @EMAIL, @SALT, @HASHEDPW, @DATEJOINED)", connection);
+                cmd.Parameters.AddWithValue("ID", createdUser.ID);
+                cmd.Parameters.AddWithValue("NAME", createdUser.Name);
+                cmd.Parameters.AddWithValue("EMAIL", createdUser.Email);
+                cmd.Parameters.AddWithValue("SALT", createdUser.Salt);
+                cmd.Parameters.AddWithValue("HASHEDPW", createdUser.PasswordHashWithSalt);
+                cmd.Parameters.AddWithValue("DATEJOINED", createdUser.JoinTime);
 
-                if (string.IsNullOrWhiteSpace(newUser.ID))
-                    newUser.ID = Guid.NewGuid().ToString(); //Workaround til at Morten og Goosifer kan oprettes som default
-
-                while (users.Any(x => x.ID == newUser.ID))
-                    newUser.ID = Guid.NewGuid().ToString(); //Sikrer ingen kan kopiere unikke ID'er udefra eller hvis der mirakuløst skulle være en ikke unik ID
-
-                createdUser = HashData(newUser);
-
-                users.Add(createdUser);
-
-                string updatedUsers = JsonSerializer.Serialize(users, new JsonSerializerOptions { WriteIndented = true });
-                System.IO.File.WriteAllText(userFile, updatedUsers);
+                await cmd.ExecuteNonQueryAsync();
 
             }
+            catch
+            {
+                return BadRequest(userResults[UserResults.FailedCreation]);
+            }
 
-            return Ok(new UserReturnDTO { Name = createdUser.Name, Email = createdUser.Email, ID = createdUser.ID! });
-
-        }
-
-        /// <summary>
-        /// Testing tool to see contents of the users.json file
-        /// </summary>
-        /// <returns>All "users"</returns>
-        [HttpGet("testreader")]
-        public IEnumerable<User> Get()
-        {
-
-            string json;
-            lock (fileLock)
-                json = System.IO.File.ReadAllText(userFile);
-            List<User> users = JsonSerializer.Deserialize<List<User>>(json) ?? new List<User>();
-            return users;
-
-        }
-
-        /// <summary>
-        /// Deletes the contents of "users.json"
-        /// </summary>
-        /// <returns>Response</returns>
-        [HttpDelete("clear")]
-        public IActionResult DeleteUsers([FromBody] string text)
-        {
-
-            if (text != resetPass)
-                return BadRequest();
-
-            ResetAction();
-
-            return NoContent();
+            return Ok(new UserReturnDTO { Name = createdUser.Name, Email = createdUser.Email, ID = createdUser.ID });
 
         }
 
@@ -176,9 +143,10 @@ namespace ReactAPI.Controllers
         {
 
             lock (Posts.cacheLock)
-                return Ok(Posts.cachedUsers); 
+                return Ok(Posts.cachedUsers);
 
         }
+
 
         [HttpGet("checknewusers")]
         public IActionResult UserHash()
@@ -198,56 +166,44 @@ namespace ReactAPI.Controllers
 
         }
 
-        /// <summary>
-        /// Endpoint to verify database access and that users exist
-        /// </summary>
-        [HttpGet("db-test")]
-        public async Task<IActionResult> DbTest()
-        {
-            await using var connection = new NpgsqlConnection(database_login);
-            await connection.OpenAsync();
-
-            await using var cmd = new NpgsqlCommand(
-                "SELECT COUNT(*) FROM users;",
-                connection);
-
-            long count = (long)await cmd.ExecuteScalarAsync();
-
-            return Ok(new
-            {
-                message = "Database connection successful",
-                users_in_database = count
-            });
-        }
-
-
-        private void ResetAction()
+        [HttpPost("updateprofile")]
+        public async Task<IActionResult> UpdateUser([FromBody] ProfileUpdateDTO profileUpdate)
         {
 
-            List<User> createUsers = new List<User>
+            try
             {
 
-            HashData(new CreateUserDTO { Name = "Morten", Email = "morten@oceandefender.dk", Password = "Morten1234", ID = "a7b9e4d1-3c2f-4d8a-9e5b-6f1c2d3e4a90" }),
-            HashData(new CreateUserDTO { Name = "Goosifer", Email = "goosifer@oceandefender.dk", Password = "Goosifer1234", ID = "d3f1c2a4-8b6e-4a91-9c2d-1f7e5a6b8c30" })
+                await using var connection = new NpgsqlConnection(database_login);
+                await connection.OpenAsync();
 
-            };
-            string defaultUsers = JsonSerializer.Serialize(createUsers, new JsonSerializerOptions { WriteIndented = true });
+                await using var cmd = new NpgsqlCommand("UPDATE users SET name = @NAME, catchphrase = @CATCHPHRASE, picture_url = @PICTURE WHERE id = @ID", connection);
+                cmd.Parameters.AddWithValue("NAME", profileUpdate.Name);
+                cmd.Parameters.AddWithValue("CATCHPHRASE", profileUpdate.CatchPhrase);
+                cmd.Parameters.AddWithValue("PICTURE", profileUpdate.PictureURL);
+                cmd.Parameters.AddWithValue("ID", profileUpdate.ID);
 
-            lock (fileLock)
-                System.IO.File.WriteAllText(userFile, defaultUsers);
+                await cmd.ExecuteNonQueryAsync();
+
+            }
+            catch
+            {
+                return BadRequest(userResults[UserResults.UpdateFailed]);
+            }
+
+            return Ok(userResults[UserResults.ProfileUpdated]);
 
         }
 
 
-        private static User HashData(CreateUserDTO user)
+        private static User AddUser(CreateUserDTO user)
         {
 
-            byte[] salt = new byte[16];
+            byte[] salt = new byte[32];
             RandomNumberGenerator.Fill(salt);
 
             byte[] passPlusSalt = Encoding.UTF8.GetBytes(user.Password).Concat(salt).ToArray();
-            using SHA256 mySHA256 = SHA256.Create();
-            byte[] hashedPassWithSalt = mySHA256.ComputeHash(passPlusSalt);
+            using SHA512 mySHA512 = SHA512.Create();
+            byte[] hashedPassWithSalt = mySHA512.ComputeHash(passPlusSalt);
 
             User newUser = new User()
             {
@@ -263,7 +219,7 @@ namespace ReactAPI.Controllers
 
             lock (Posts.cacheLock)
             {
-                Posts.cachedUsers.Add(new UserListingDTO { ID = newUser.ID, Name = user.Name });
+                Posts.cachedUsers.Add(new UserListingDTO { ID = newUser.ID, Name = newUser.Name, JoinTime = newUser.JoinTime });
 
                 string createHash = JsonSerializer.Serialize(Posts.cachedUsers);
                 byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(createHash));
@@ -275,6 +231,72 @@ namespace ReactAPI.Controllers
 
         }
 
+        private static async Task InitialUsersHash()
+        {
+
+            List<User> users = await GetUsersFromDB();
+
+            Posts.cachedUsers.Clear();
+
+            foreach (User user in users)
+                Posts.cachedUsers.Add(new UserListingDTO { ID = user.ID, Name = user.Name, JoinTime = user.JoinTime, CatchPhrase = user.CatchPhrase, PictureURL = user.PictureURL });
+
+            string createHash = JsonSerializer.Serialize(Posts.cachedUsers);
+            byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(createHash));
+
+            lock (Posts.cacheLock)
+                usersHash = Convert.ToHexString(hash);
+
+        }
+
+
+        private static async Task<List<User>> GetUsersFromDB()
+        {
+
+            List<User> users = new List<User>();
+
+            try
+            {
+
+                await using var connection = new NpgsqlConnection(database_login);
+                await connection.OpenAsync();
+
+                await using var cmd = new NpgsqlCommand("SELECT * FROM users;", connection);
+                await using var reader = await cmd.ExecuteReaderAsync();
+
+                while (await reader.ReadAsync())
+                {
+                    User user = new User
+                    {
+
+                        ID = reader.GetString(reader.GetOrdinal("id")),
+                        Name = reader.GetString(reader.GetOrdinal("name")),
+                        Email = reader.GetString(reader.GetOrdinal("email")),
+                        Salt = (byte[])reader["salt"],
+                        PasswordHashWithSalt = (byte[])reader["hashedpw"],
+                        JoinTime = reader.GetDateTime(reader.GetOrdinal("datejoined")),
+                        CatchPhrase = reader.IsDBNull(reader.GetOrdinal("catchphrase"))
+                            ? null
+                            : reader.GetString(reader.GetOrdinal("catchphrase")),
+                        PictureURL = reader.IsDBNull(reader.GetOrdinal("picture_url"))
+                            ? null
+                            : reader.GetString(reader.GetOrdinal("picture_url"))
+
+                    };
+
+                    users.Add(user);
+                }
+
+            }
+            catch
+            {
+
+            }
+
+            return users;
+
+        }
+
     }
 
     /// <summary>
@@ -283,7 +305,8 @@ namespace ReactAPI.Controllers
     public class User
     {
 
-        public string? ID { get; set; }
+        public required string ID { get; set; }
+
 
         public required string Name { get; set; }
 
@@ -298,6 +321,12 @@ namespace ReactAPI.Controllers
 
 
         public required DateTime JoinTime { get; set; }
+
+
+        public string? CatchPhrase { get; set; }
+
+
+        public string? PictureURL { get; set; }
 
     }
 
@@ -356,9 +385,37 @@ namespace ReactAPI.Controllers
     public class UserListingDTO
     {
 
+
         public required string ID { get; set; }
 
+
         public required string Name { get; set; }
+
+
+        public required DateTime JoinTime { get; set; }
+
+
+        public string? CatchPhrase { get; set; }
+
+
+        public string? PictureURL { get; set; }
+
+    }
+
+    public class ProfileUpdateDTO
+    {
+
+
+        public required string ID { get; set; }
+
+
+        public required string Name { get; set; }
+
+
+        public required string CatchPhrase { get; set; }
+
+
+        public required string PictureURL { get; set; }
 
     }
 
@@ -368,7 +425,9 @@ namespace ReactAPI.Controllers
         Created,
         FailedCreation,
         FailedLogin,
-        InvalidPassOrMail
+        InvalidPassOrMail,
+        ProfileUpdated,
+        UpdateFailed
 
     }
 
