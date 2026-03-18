@@ -160,26 +160,16 @@ namespace ReactAPI.Controllers
         public async Task<IActionResult> UpdateUser([FromBody] ProfileUpdateDTO profileUpdate)
         {
 
-            try
-            {
+            await using var connection = new NpgsqlConnection(database_login);
+            await connection.OpenAsync();
 
-                await using var connection = new NpgsqlConnection(database_login);
-                await connection.OpenAsync();
+            await using var cmd = new NpgsqlCommand("UPDATE users SET name = @NAME, catchphrase = @CATCHPHRASE, picture_url = @PICTURE WHERE id = @ID", connection);
+            cmd.Parameters.AddWithValue("NAME", profileUpdate.Name);
+            cmd.Parameters.AddWithValue("CATCHPHRASE", profileUpdate.CatchPhrase);
+            cmd.Parameters.AddWithValue("PICTURE", profileUpdate.PictureURL);
+            cmd.Parameters.AddWithValue("ID", profileUpdate.ID);
 
-                await using var cmd = new NpgsqlCommand("UPDATE users SET name = @NAME, catchphrase = @CATCHPHRASE, picture_url = @PICTURE WHERE id = @ID", connection);
-                cmd.Parameters.AddWithValue("NAME", profileUpdate.Name);
-                cmd.Parameters.AddWithValue("CATCHPHRASE", profileUpdate.CatchPhrase);
-                cmd.Parameters.AddWithValue("PICTURE", profileUpdate.PictureURL);
-                cmd.Parameters.AddWithValue("ID", profileUpdate.ID);
-
-                await cmd.ExecuteNonQueryAsync();
-
-            }
-            catch (Exception error)
-            {
-                Console.WriteLine(error.ToString());
-                return BadRequest(userResults[UserResults.UpdateFailed]);
-            }
+            await cmd.ExecuteNonQueryAsync();
 
             return Ok(userResults[UserResults.ProfileUpdated]);
 
@@ -246,42 +236,33 @@ namespace ReactAPI.Controllers
 
             List<User> users = new List<User>();
 
-            try
+            await using var connection = new NpgsqlConnection(database_login);
+            await connection.OpenAsync();
+
+            await using var cmd = new NpgsqlCommand("SELECT * FROM users;", connection);
+            await using var reader = await cmd.ExecuteReaderAsync();
+
+            while (await reader.ReadAsync())
             {
-
-                await using var connection = new NpgsqlConnection(database_login);
-                await connection.OpenAsync();
-
-                await using var cmd = new NpgsqlCommand("SELECT * FROM users;", connection);
-                await using var reader = await cmd.ExecuteReaderAsync();
-
-                while (await reader.ReadAsync())
+                User user = new User
                 {
-                    User user = new User
-                    {
 
-                        ID = reader.GetString(reader.GetOrdinal("id")),
-                        Name = reader.GetString(reader.GetOrdinal("name")),
-                        Email = reader.GetString(reader.GetOrdinal("email")),
-                        Salt = (byte[])reader["salt"],
-                        PasswordHashWithSalt = (byte[])reader["hashedpw"],
-                        JoinTime = reader.GetDateTime(reader.GetOrdinal("datejoined")),
-                        CatchPhrase = reader.IsDBNull(reader.GetOrdinal("catchphrase"))
-                            ? null
-                            : reader.GetString(reader.GetOrdinal("catchphrase")),
-                        PictureURL = reader.IsDBNull(reader.GetOrdinal("picture_url"))
-                            ? null
-                            : reader.GetString(reader.GetOrdinal("picture_url"))
+                    ID = reader.GetString(reader.GetOrdinal("id")),
+                    Name = reader.GetString(reader.GetOrdinal("name")),
+                    Email = reader.GetString(reader.GetOrdinal("email")),
+                    Salt = (byte[])reader["salt"],
+                    PasswordHashWithSalt = (byte[])reader["hashedpw"],
+                    JoinTime = reader.GetDateTime(reader.GetOrdinal("datejoined")),
+                    CatchPhrase = reader.IsDBNull(reader.GetOrdinal("catchphrase"))
+                        ? null
+                        : reader.GetString(reader.GetOrdinal("catchphrase")),
+                    PictureURL = reader.IsDBNull(reader.GetOrdinal("picture_url"))
+                        ? null
+                        : reader.GetString(reader.GetOrdinal("picture_url"))
 
-                    };
+                };
 
-                    users.Add(user);
-                }
-
-            }
-            catch (Exception error)
-            {
-                Console.WriteLine(error.ToString());
+                users.Add(user);
             }
 
             return users;
