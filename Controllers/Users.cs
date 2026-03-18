@@ -236,6 +236,11 @@ namespace ReactAPI.Controllers
 
         }
 
+        private static string InitiateUserHash()
+        {
+            return null!;
+        }
+
     }
 
     /// <summary>
