@@ -46,9 +46,7 @@ namespace ReactAPI.Controllers
             lock (dictLock)
                 posts = cachedPosts.Values.ToList();
 
-            string json = JsonSerializer.Serialize(posts, new JsonSerializerOptions { WriteIndented = true });
-
-            return Ok(json);
+            return Ok(posts);
 
         }
 
@@ -146,9 +144,7 @@ namespace ReactAPI.Controllers
                     post.Likes.Add(opinion.UserID);
 
                     // Indsæt like
-                    await using var insertLikeCmd = new NpgsqlCommand(
-                        "INSERT INTO likes (user_id, post_id) VALUES (@USER_ID, @POST_ID) ON CONFLICT DO NOTHING",
-                        connection, transaction);
+                    await using var insertLikeCmd = new NpgsqlCommand("INSERT INTO likes (user_id, post_id) VALUES (@USER_ID, @POST_ID) ON CONFLICT DO NOTHING", connection, transaction);
                     insertLikeCmd.Parameters.AddWithValue("USER_ID", opinion.UserID);
                     insertLikeCmd.Parameters.AddWithValue("POST_ID", opinion.PostID);
                     await insertLikeCmd.ExecuteNonQueryAsync();
@@ -157,9 +153,7 @@ namespace ReactAPI.Controllers
                     if (alreadyDisliked)
                     {
                         post.Dislikes.Remove(opinion.UserID);
-                        await using var removeDislikeCmd = new NpgsqlCommand(
-                            "DELETE FROM dislikes WHERE user_id = @USER_ID AND post_id = @POST_ID",
-                            connection, transaction);
+                        await using var removeDislikeCmd = new NpgsqlCommand("DELETE FROM dislikes WHERE user_id = @USER_ID AND post_id = @POST_ID", connection, transaction);
                         removeDislikeCmd.Parameters.AddWithValue("USER_ID", opinion.UserID);
                         removeDislikeCmd.Parameters.AddWithValue("POST_ID", opinion.PostID);
                         await removeDislikeCmd.ExecuteNonQueryAsync();
@@ -173,9 +167,7 @@ namespace ReactAPI.Controllers
                     post.Dislikes.Add(opinion.UserID);
 
                     // Indsæt dislike
-                    await using var insertDislikeCmd = new NpgsqlCommand(
-                        "INSERT INTO dislikes (user_id, post_id) VALUES (@USER_ID, @POST_ID) ON CONFLICT DO NOTHING",
-                        connection, transaction);
+                    await using var insertDislikeCmd = new NpgsqlCommand("INSERT INTO dislikes (user_id, post_id) VALUES (@USER_ID, @POST_ID) ON CONFLICT DO NOTHING", connection, transaction);
                     insertDislikeCmd.Parameters.AddWithValue("USER_ID", opinion.UserID);
                     insertDislikeCmd.Parameters.AddWithValue("POST_ID", opinion.PostID);
                     await insertDislikeCmd.ExecuteNonQueryAsync();
@@ -184,9 +176,7 @@ namespace ReactAPI.Controllers
                     if (alreadyLiked)
                     {
                         post.Likes.Remove(opinion.UserID);
-                        await using var removeLikeCmd = new NpgsqlCommand(
-                            "DELETE FROM likes WHERE user_id = @USER_ID AND post_id = @POST_ID",
-                            connection, transaction);
+                        await using var removeLikeCmd = new NpgsqlCommand("DELETE FROM likes WHERE user_id = @USER_ID AND post_id = @POST_ID", connection, transaction);
                         removeLikeCmd.Parameters.AddWithValue("USER_ID", opinion.UserID);
                         removeLikeCmd.Parameters.AddWithValue("POST_ID", opinion.PostID);
                         await removeLikeCmd.ExecuteNonQueryAsync();
@@ -480,49 +470,53 @@ namespace ReactAPI.Controllers
             {
                 string postId = reader.GetString(reader.GetOrdinal("post_id"));
 
-                if (!cachedPosts.TryGetValue(postId, out var post))
+                lock (dictLock)
                 {
-                    post = new PostDTO
+
+                    if (!cachedPosts.TryGetValue(postId, out var post))
                     {
-                        PostID = postId,
-                        PosterID = reader.GetString(reader.GetOrdinal("poster_id")),
-                        Post = reader.GetString(reader.GetOrdinal("post")),
-                        PictureURL = reader.IsDBNull(reader.GetOrdinal("url"))
-                            ? null
-                            : reader.GetString(reader.GetOrdinal("url"))
-                    };
+                        post = new PostDTO
+                        {
+                            PostID = postId,
+                            PosterID = reader.GetString(reader.GetOrdinal("poster_id")),
+                            Post = reader.GetString(reader.GetOrdinal("post")),
+                            PictureURL = reader.IsDBNull(reader.GetOrdinal("url"))
+                                ? null
+                                : reader.GetString(reader.GetOrdinal("url"))
+                        };
 
-                    cachedPosts.Add(postId, post);
-                }
+                        cachedPosts.Add(postId, post);
+                    }
 
-                if (!reader.IsDBNull(reader.GetOrdinal("comment_id")))
-                {
-                    var comment = new CommentDTO
+                    if (!reader.IsDBNull(reader.GetOrdinal("comment_id")))
                     {
-                        CommentID = reader.GetString(reader.GetOrdinal("comment_id")),
-                        PosterID = reader.GetString(reader.GetOrdinal("commenter_id")),
-                        PostID = postId,
-                        Comment = reader.GetString(reader.GetOrdinal("comment"))
-                    };
+                        var comment = new CommentDTO
+                        {
+                            CommentID = reader.GetString(reader.GetOrdinal("comment_id")),
+                            PosterID = reader.GetString(reader.GetOrdinal("commenter_id")),
+                            PostID = postId,
+                            Comment = reader.GetString(reader.GetOrdinal("comment"))
+                        };
 
-                    if (!post.Comments.Any(c => c.CommentID == comment.CommentID))
-                        post.Comments.Add(comment);
-                }
+                        if (!post.Comments.Any(c => c.CommentID == comment.CommentID))
+                            post.Comments.Add(comment);
+                    }
 
-                if (!reader.IsDBNull(reader.GetOrdinal("like_user")))
-                {
-                    string userId = reader.GetString(reader.GetOrdinal("like_user"));
+                    if (!reader.IsDBNull(reader.GetOrdinal("like_user")))
+                    {
+                        string userId = reader.GetString(reader.GetOrdinal("like_user"));
 
-                    if (!post.Likes.Contains(userId))
-                        post.Likes.Add(userId);
-                }
+                        if (!post.Likes.Contains(userId))
+                            post.Likes.Add(userId);
+                    }
 
-                if (!reader.IsDBNull(reader.GetOrdinal("dislike_user")))
-                {
-                    string userId = reader.GetString(reader.GetOrdinal("dislike_user"));
+                    if (!reader.IsDBNull(reader.GetOrdinal("dislike_user")))
+                    {
+                        string userId = reader.GetString(reader.GetOrdinal("dislike_user"));
 
-                    if (!post.Dislikes.Contains(userId))
-                        post.Dislikes.Add(userId);
+                        if (!post.Dislikes.Contains(userId))
+                            post.Dislikes.Add(userId);
+                    }
                 }
             }
 

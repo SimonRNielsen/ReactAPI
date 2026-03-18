@@ -3,7 +3,6 @@ using Npgsql;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Npgsql;
 
 namespace ReactAPI.Controllers
 {
@@ -129,8 +128,9 @@ namespace ReactAPI.Controllers
                 await cmd.ExecuteNonQueryAsync();
 
             }
-            catch
+            catch (Exception error)
             {
+                Console.WriteLine(error.ToString());
                 return BadRequest(userResults[UserResults.FailedCreation]);
             }
 
@@ -185,8 +185,9 @@ namespace ReactAPI.Controllers
                 await cmd.ExecuteNonQueryAsync();
 
             }
-            catch
+            catch (Exception error)
             {
+                Console.WriteLine(error.ToString());
                 return BadRequest(userResults[UserResults.UpdateFailed]);
             }
 
@@ -288,9 +289,9 @@ namespace ReactAPI.Controllers
                 }
 
             }
-            catch
+            catch (Exception error)
             {
-
+                Console.WriteLine(error.ToString());
             }
 
             return users;
