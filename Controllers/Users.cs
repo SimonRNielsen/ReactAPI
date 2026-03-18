@@ -11,8 +11,7 @@ namespace ReactAPI.Controllers
     public class Users : ControllerBase
     {
 
-        private static readonly string userFile = "tmp/users.json", resetPass;
-        public static readonly object fileLock = new object();
+        public static readonly string database_login;
         private static string? usersHash;
         private static readonly Dictionary<UserResults, string> userResults = new Dictionary<UserResults, string>
         {
@@ -28,20 +27,15 @@ namespace ReactAPI.Controllers
         static Users()
         {
 
-            resetPass = "reset";
-
-            string path = Path.GetDirectoryName(userFile)!;
-
-            if (!Directory.Exists(path))
-                Directory.CreateDirectory(path);
-
-            List<User> createUsers = new List<User>();
-            createUsers.Add(HashData(new CreateUserDTO { Name = "Morten", Email = "morten@oceandefender.dk", Password = "Morten1234", ID = "a7b9e4d1-3c2f-4d8a-9e5b-6f1c2d3e4a90" }));
-            createUsers.Add(HashData(new CreateUserDTO { Name = "Goosifer", Email = "goosifer@oceandefender.dk", Password = "Goosifer1234", ID = "d3f1c2a4-8b6e-4a91-9c2d-1f7e5a6b8c30" }));
-            string defaultUsers = JsonSerializer.Serialize(createUsers, new JsonSerializerOptions { WriteIndented = true });
-
-            lock (fileLock)
-                System.IO.File.WriteAllText(userFile, defaultUsers);
+            string database_user = Environment.GetEnvironmentVariable("DATABASE_USER")!;
+            string database_password = Environment.GetEnvironmentVariable("DATABASE_PASSWORD")!;
+            database_login =
+            "Host=dpg-d6t6ng3uibrs73cnkqag-a;" +
+            "Port=5432;" +
+            "Database=onlymortenfans;" +
+            $"Username={database_user};" +
+            $"Password={database_password};" +
+            "SSL Mode=Require;";
 
         }
 

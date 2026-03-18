@@ -10,10 +10,8 @@ namespace ReactAPI.Controllers
     public class Posts : ControllerBase
     {
 
-        private static readonly string postsFile = "tmp/posts.json", resetPass;
         private static string? currentHash;
         public static List<UserListingDTO> cachedUsers = new List<UserListingDTO>();
-        private static readonly object fileLock = new object();
         public static readonly object cacheLock = new object();
         private static readonly Dictionary<PostResults, string> postResults = new Dictionary<PostResults, string>
         {
@@ -33,13 +31,7 @@ namespace ReactAPI.Controllers
         static Posts()
         {
 
-            resetPass = "clear";
-            string path = Path.GetDirectoryName(postsFile)!;
 
-            if (!Directory.Exists(path))
-                Directory.CreateDirectory(path);
-
-            CreateDefaultPosts();
 
         }
 
