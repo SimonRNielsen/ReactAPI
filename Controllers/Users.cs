@@ -134,6 +134,8 @@ namespace ReactAPI.Controllers
         public async Task<IActionResult> GetUserListings()
         {
 
+            await InitializeIfNeededAsync();
+
             lock (Posts.cacheLock)
                 return Ok(Posts.cachedUsers);
 
@@ -221,8 +223,6 @@ namespace ReactAPI.Controllers
         private static async Task InitialUsersHash()
         {
 
-            await InitializeIfNeededAsync();
-
             List<User> users = await GetUsersFromDB();
 
             Posts.cachedUsers.Clear();
@@ -241,8 +241,6 @@ namespace ReactAPI.Controllers
 
         private static async Task<List<User>> GetUsersFromDB()
         {
-
-            await InitializeIfNeededAsync();
 
             List<User> users = new List<User>();
 
