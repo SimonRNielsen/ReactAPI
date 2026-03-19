@@ -168,20 +168,6 @@ namespace ReactAPI.Controllers
 
             await InitializeIfNeededAsync();
 
-            lock (Posts.cacheLock)
-            {
-
-                UserListingDTO? user = Posts.cachedUsers.FirstOrDefault(x => x.ID == profileUpdate.ID);
-
-                if (user == null)
-                    return BadRequest(userResults[UserResults.UpdateFailed]);
-
-                user.Name = profileUpdate.Name;
-                user.PictureURL = profileUpdate.PictureURL;
-                user.CatchPhrase = profileUpdate.CatchPhrase;
-
-            }
-
             await using var connection = new NpgsqlConnection(database_login);
             await connection.OpenAsync();
 
@@ -191,7 +177,26 @@ namespace ReactAPI.Controllers
             cmd.Parameters.AddWithValue("PICTURE", profileUpdate.PictureURL);
             cmd.Parameters.AddWithValue("ID", profileUpdate.ID);
 
-            await cmd.ExecuteNonQueryAsync();
+            int success = await cmd.ExecuteNonQueryAsync();
+
+            if (success == 0)
+                return BadRequest(userResults[UserResults.UpdateFailed]);
+
+            lock (Posts.cacheLock)
+            {
+
+                UserListingDTO? user = Posts.cachedUsers.FirstOrDefault(x => x.ID == profileUpdate.ID);
+
+                user.Name = profileUpdate.Name;
+                user.PictureURL = profileUpdate.PictureURL;
+                user.CatchPhrase = profileUpdate.CatchPhrase;
+
+                string createHash = JsonSerializer.Serialize(Posts.cachedUsers);
+                byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(createHash));
+
+                usersHash = Convert.ToHexString(hash);
+
+            }
 
             return Ok(userResults[UserResults.ProfileUpdated]);
 
