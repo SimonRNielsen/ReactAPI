@@ -35,9 +35,9 @@ namespace ReactAPI.Controllers
             string database_internalURL = Environment.GetEnvironmentVariable("DATABASE_URL")!;
             string database_path = Environment.GetEnvironmentVariable("DATABASE_PATH")!;
             database_login =
-            $"Host=dpg-d6t6ng3uibrs73cnkqag-a;" +
+            $"Host={database_internalURL};" +
             "Port=5432;" +
-            $"Database=onlymortenfans;" +
+            $"Database={database_path};" +
             $"Username={database_user};" +
             $"Password={database_password};" +
             "SSL Mode=Require;";
