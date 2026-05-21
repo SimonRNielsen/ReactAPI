@@ -11,6 +11,8 @@ namespace ReactAPI.Controllers
     public class Posts : ControllerBase
     {
 
+        private static bool initialized = false;
+        private static readonly SemaphoreSlim initSemaphore = new SemaphoreSlim(1, 1);
         private static string? currentHash;
         public static List<UserListingDTO> cachedUsers = new List<UserListingDTO>();
         public static readonly object cacheLock = new object(), postHashLock = new object(), dictLock = new object();
@@ -29,13 +31,6 @@ namespace ReactAPI.Controllers
             { PostResults.NotAuthenticated, "Not authorized to clear posts!" }
 
         };
-
-        static Posts()
-        {
-
-            //ReadPosts().GetAwaiter().GetResult();
-
-        }
 
         [HttpGet("posts")]
         public async Task<IActionResult> GetPosts()
@@ -62,7 +57,7 @@ namespace ReactAPI.Controllers
                 if (!cachedUsers.Any(x => x.ID == comment.PosterID))
                     return BadRequest(postResults[PostResults.UserNotFound]);
 
-            PostDTO? post; 
+            PostDTO? post;
             lock (dictLock)
                 post = cachedPosts.Values.FirstOrDefault(x => comment.PostID == x.PostID);
 
@@ -109,31 +104,6 @@ namespace ReactAPI.Controllers
 
             if (post == null)
                 return Conflict(postResults[PostResults.NotFound]);
-
-            /* ORIGINAL
-            if (opinion.Opinion) // ORIGINAL
-            {
-                if (post.Likes.Contains(opinion.UserID))
-                    post.Likes.Remove(opinion.UserID);
-                else
-                {
-                    post.Likes.Add(opinion.UserID);
-                    if (post.Dislikes.Contains(opinion.UserID))
-                        post.Dislikes.Remove(opinion.UserID);
-                }
-            }
-            else
-            {
-                if (post.Dislikes.Contains(opinion.UserID))
-                    post.Dislikes.Remove(opinion.UserID);
-                else
-                {
-                    post.Dislikes.Add(opinion.UserID);
-                    if (post.Likes.Contains(opinion.UserID))
-                        post.Likes.Remove(opinion.UserID);
-                }
-            }
-            */
 
             bool alreadyLiked = post.Likes.Contains(opinion.UserID);
             bool alreadyDisliked = post.Dislikes.Contains(opinion.UserID);
@@ -338,120 +308,6 @@ namespace ReactAPI.Controllers
 
         }
 
-        /*
-        private static void SavePosts(List<PostDTO> posts) /////////////////////////////////////////////////////// Skal uddelegeres
-        {
-
-            string postsJson = JsonSerializer.Serialize(posts, new JsonSerializerOptions { WriteIndented = true });
-
-            //System.IO.File.WriteAllText(postsFile, postsJson); ////////////////////////////////////////// Skal laves om
-
-            byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(postsJson));
-
-            currentHash = Convert.ToHexString(hash);
-
-        }
-        */
-
-        /*
-        private static async Task<List<PostDTO>> ReadPosts()
-        {
-
-            List<PostDTO> posts = new List<PostDTO>();
-
-            try
-            {
-
-                await using var connection = new NpgsqlConnection(Users.database_login);
-                await connection.OpenAsync();
-
-                await using var postsCmd = new NpgsqlCommand("SELECT * FROM posts;", connection);
-                await using var postReader = await postsCmd.ExecuteReaderAsync();
-
-                while (await postReader.ReadAsync())
-                {
-
-                    PostDTO post = new PostDTO
-                    {
-
-                        PosterID = postReader.GetString(postReader.GetOrdinal("poster_id")),
-                        PostID = postReader.GetString(postReader.GetOrdinal("post_id")),
-                        Post = postReader.GetString(postReader.GetOrdinal("post")),
-                        PictureURL = postReader.IsDBNull(postReader.GetOrdinal("url"))
-                            ? null
-                            : postReader.GetString(postReader.GetOrdinal("url"))
-
-                    };
-
-                    posts.Add(post);
-
-                }
-
-                await connection.OpenAsync();
-
-                await using var commentsCmd = new NpgsqlCommand("SELECT * FROM comments;", connection);
-                await using var commentsReader = await commentsCmd.ExecuteReaderAsync();
-
-                while (await commentsReader.ReadAsync())
-                {
-
-                    CommentDTO comment = new CommentDTO
-                    {
-
-                        PosterID = commentsReader.GetString(commentsReader.GetOrdinal("commenter_id")),
-                        PostID = commentsReader.GetString(commentsReader.GetOrdinal("post_id")),
-                        Comment = commentsReader.GetString(commentsReader.GetOrdinal("comment")),
-                        CommentID = commentsReader.GetString(commentsReader.GetOrdinal("comment_id"))
-
-                    };
-
-                    PostDTO addComment = posts.Find(x => x.PostID == comment.PostID)!;
-                    addComment.Comments.Add(comment);
-
-                }
-
-                await connection.OpenAsync();
-
-                await using var likesCmd = new NpgsqlCommand("SELECT * FROM likes;", connection);
-                await using var likesReader = await likesCmd.ExecuteReaderAsync();
-
-                while (await likesReader.ReadAsync())
-                {
-
-                    string userID = likesReader.GetString(likesReader.GetOrdinal("user_id"));
-                    string postID = likesReader.GetString(likesReader.GetOrdinal("post_id"));
-
-                    PostDTO addLike = posts.Find(x => x.PostID == postID)!;
-                    addLike.Likes.Add(userID);
-
-                }
-
-                await connection.OpenAsync();
-
-                await using var dislikesCmd = new NpgsqlCommand("SELECT * FROM dislikes;", connection);
-                await using var dislikesReader = await dislikesCmd.ExecuteReaderAsync();
-
-                while (await dislikesReader.ReadAsync())
-                {
-
-                    string userID = dislikesReader.GetString(likesReader.GetOrdinal("user_id"));
-                    string postID = dislikesReader.GetString(likesReader.GetOrdinal("post_id"));
-
-                    PostDTO addDislike = posts.Find(x => x.PostID == postID)!;
-                    addDislike.Dislikes.Add(userID);
-
-                }
-
-            }
-            catch
-            {
-
-            }
-
-            return posts;
-
-        }
-        */
 
         private static async Task<List<PostDTO>> ReadPosts()
         {
@@ -463,19 +319,21 @@ namespace ReactAPI.Controllers
                 p.poster_id,
                 p.post,
                 p.url,
-   
+                p.time_created AS post_time_created,
+
                 c.comment_id,
                 c.commenter_id,
                 c.comment,
+                c.time_created AS comment_time_created,
 
-                l.user_id  AS like_user,
-                d.user_id  AS dislike_user
+                l.user_id AS like_user,
+                d.user_id AS dislike_user
 
                 FROM posts p
                 LEFT JOIN comments c ON c.post_id = p.post_id
                 LEFT JOIN likes l ON l.post_id = p.post_id
                 LEFT JOIN dislikes d ON d.post_id = p.post_id
-                ORDER BY p.post_id;";
+                ORDER BY p.time_created ASC;";
 
             await using var cmd = new NpgsqlCommand(query, connection);
             await using var reader = await cmd.ExecuteReaderAsync();
@@ -487,8 +345,9 @@ namespace ReactAPI.Controllers
                 lock (dictLock)
                 {
 
-                    if (!cachedPosts.TryGetValue(postId, out var post))
+                    if (!cachedPosts.TryGetValue(postId, out PostDTO? post))
                     {
+
                         post = new PostDTO
                         {
                             PostID = postId,
@@ -496,48 +355,66 @@ namespace ReactAPI.Controllers
                             Post = reader.GetString(reader.GetOrdinal("post")),
                             PictureURL = reader.IsDBNull(reader.GetOrdinal("url"))
                                 ? null
-                                : reader.GetString(reader.GetOrdinal("url"))
+                                : reader.GetString(reader.GetOrdinal("url")),
+                            TimeCreated = reader.GetDateTime(reader.GetOrdinal("post_time_created"))
                         };
 
                         cachedPosts.Add(postId, post);
+
                     }
 
                     if (!reader.IsDBNull(reader.GetOrdinal("comment_id")))
                     {
-                        var comment = new CommentDTO
+
+                        CommentDTO comment = new CommentDTO
                         {
                             CommentID = reader.GetString(reader.GetOrdinal("comment_id")),
                             PosterID = reader.GetString(reader.GetOrdinal("commenter_id")),
                             PostID = postId,
-                            Comment = reader.GetString(reader.GetOrdinal("comment"))
+                            Comment = reader.GetString(reader.GetOrdinal("comment")),
+                            TimeCreated = reader.GetDateTime(reader.GetOrdinal("comment_time_created"))
                         };
 
                         if (!post.Comments.Any(c => c.CommentID == comment.CommentID))
                             post.Comments.Add(comment);
+
                     }
 
                     if (!reader.IsDBNull(reader.GetOrdinal("like_user")))
                     {
+
                         string userId = reader.GetString(reader.GetOrdinal("like_user"));
 
                         if (!post.Likes.Contains(userId))
                             post.Likes.Add(userId);
+
                     }
 
                     if (!reader.IsDBNull(reader.GetOrdinal("dislike_user")))
                     {
+
                         string userId = reader.GetString(reader.GetOrdinal("dislike_user"));
 
                         if (!post.Dislikes.Contains(userId))
                             post.Dislikes.Add(userId);
+
                     }
+
                 }
             }
 
             List<PostDTO> posts;
 
             lock (dictLock)
-                posts = cachedPosts.Values.ToList();
+            {
+
+                foreach (PostDTO post in cachedPosts.Values)
+                    post.Comments = post.Comments.OrderBy(x => x.TimeCreated).ToList();
+
+                posts = cachedPosts.Values.OrderBy(x => x.TimeCreated).ToList();
+
+            }
+
             ReHash();
 
             return posts;
@@ -560,9 +437,6 @@ namespace ReactAPI.Controllers
                 currentHash = Convert.ToHexString(hash);
 
         }
-
-        private static bool initialized = false;
-        private static readonly SemaphoreSlim initSemaphore = new SemaphoreSlim(1, 1);
 
         public static async Task InitializeIfNeededAsync()
         {
@@ -621,6 +495,8 @@ namespace ReactAPI.Controllers
 
         public List<string> Dislikes { get; set; } = new List<string>();
 
+        public DateTime TimeCreated { get; set; }
+
     }
 
     public class CreatePostDTO
@@ -644,6 +520,8 @@ namespace ReactAPI.Controllers
         public required string PosterID { get; set; }
 
         public required string Comment { get; set; }
+
+        public DateTime TimeCreated { get; set; }
 
     }
 
