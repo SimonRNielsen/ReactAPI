@@ -185,7 +185,7 @@ namespace ReactAPI.Controllers
             lock (Posts.cacheLock)
             {
 
-                UserListingDTO? user = Posts.cachedUsers.FirstOrDefault(x => x.ID == profileUpdate.ID);
+                UserListingDTO? user = Posts.cachedUsers.FirstOrDefault(x => x.ID == profileUpdate.ID)!;
 
                 user.Name = profileUpdate.Name;
                 user.PictureURL = profileUpdate.PictureURL;
