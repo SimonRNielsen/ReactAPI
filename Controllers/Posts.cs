@@ -41,7 +41,7 @@ namespace ReactAPI.Controllers
             List<PostDTO> posts;
 
             lock (dictLock)
-                posts = cachedPosts.Values.ToList();
+                posts = cachedPosts.Values.OrderBy(x => x.TimeCreated).ToList();
 
             return Ok(posts);
 
@@ -69,11 +69,12 @@ namespace ReactAPI.Controllers
             await using var connection = new NpgsqlConnection(Users.database_login);
             await connection.OpenAsync();
 
-            await using var cmd = new NpgsqlCommand("INSERT INTO comments (comment_id, commenter_id, comment, post_id) VALUES (@COMMENT_ID, @COMMENTER_ID, @COMMENT, @POST_ID)", connection);
+            await using var cmd = new NpgsqlCommand("INSERT INTO comments (comment_id, commenter_id, comment, post_id, time_created) VALUES (@COMMENT_ID, @COMMENTER_ID, @COMMENT, @POST_ID, @TIME)", connection);
             cmd.Parameters.AddWithValue("POST_ID", newComment.PostID);
             cmd.Parameters.AddWithValue("COMMENT_ID", newComment.CommentID);
             cmd.Parameters.AddWithValue("COMMENT", newComment.Comment);
             cmd.Parameters.AddWithValue("COMMENTER_ID", newComment.PosterID);
+            cmd.Parameters.AddWithValue("TIME", newComment.TimeCreated);
 
             int success = await cmd.ExecuteNonQueryAsync();
 
@@ -185,11 +186,12 @@ namespace ReactAPI.Controllers
             await using var connection = new NpgsqlConnection(Users.database_login);
             await connection.OpenAsync();
 
-            await using var cmd = new NpgsqlCommand("INSERT INTO posts (post_id, poster_id, post, url) VALUES (@POST_ID, @POSTER_ID, @POST, @URL)", connection);
+            await using var cmd = new NpgsqlCommand("INSERT INTO posts (post_id, poster_id, post, url, time_created) VALUES (@POST_ID, @POSTER_ID, @POST, @URL, @TIME)", connection);
             cmd.Parameters.AddWithValue("POST_ID", post.PostID);
             cmd.Parameters.AddWithValue("POSTER_ID", post.PosterID);
             cmd.Parameters.AddWithValue("POST", post.Post);
             cmd.Parameters.AddWithValue("URL", (object?)post.PictureURL ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("TIME", post.TimeCreated);
 
             int success = await cmd.ExecuteNonQueryAsync();
 
@@ -291,6 +293,7 @@ namespace ReactAPI.Controllers
 
             lock (dictLock)
                 postWithComment.Comments.Remove(deleteThis);
+
             ReHash();
 
             return Ok(postResults[PostResults.CommentDeleted]);
@@ -405,17 +408,10 @@ namespace ReactAPI.Controllers
 
             List<PostDTO> posts;
 
-            lock (dictLock)
-            {
-
-                foreach (PostDTO post in cachedPosts.Values)
-                    post.Comments = post.Comments.OrderBy(x => x.TimeCreated).ToList();
-
-                posts = cachedPosts.Values.OrderBy(x => x.TimeCreated).ToList();
-
-            }
-
             ReHash();
+
+            lock (dictLock)
+                posts = cachedPosts.Values.OrderBy(x => x.TimeCreated).ToList();
 
             return posts;
 
@@ -427,7 +423,16 @@ namespace ReactAPI.Controllers
             List<PostDTO> posts;
 
             lock (dictLock)
+            {
+
+                foreach (PostDTO post in cachedPosts.Values)
+                    post.Comments = post.Comments.OrderBy(x => x.TimeCreated).ToList();
+
+                cachedPosts = cachedPosts.OrderBy(x => x.Value.TimeCreated).ToDictionary(x => x.Key, x => x.Value);
+
                 posts = cachedPosts.Values.ToList();
+
+            }
 
             string json = JsonSerializer.Serialize(posts);
 
@@ -495,7 +500,7 @@ namespace ReactAPI.Controllers
 
         public List<string> Dislikes { get; set; } = new List<string>();
 
-        public DateTime TimeCreated { get; set; }
+        public DateTime TimeCreated { get; set; } = DateTime.UtcNow;
 
     }
 
@@ -521,7 +526,7 @@ namespace ReactAPI.Controllers
 
         public required string Comment { get; set; }
 
-        public DateTime TimeCreated { get; set; }
+        public DateTime TimeCreated { get; set; } = DateTime.UtcNow;
 
     }
 
